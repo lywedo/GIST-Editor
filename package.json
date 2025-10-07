@@ -71,6 +71,14 @@
         "command": "gist-editor.saveGist",
         "title": "Save Gist",
         "icon": "$(save)"
+      },
+      {
+        "command": "gist-editor.createGistFromFile",
+        "title": "Create Gist from Current File"
+      },
+      {
+        "command": "gist-editor.createGistFromSelection",
+        "title": "Create Gist from Selection"
       }
     ],
     "menus": {
@@ -89,6 +97,28 @@
           "command": "gist-editor.setupToken",
           "when": "view == gist-editor.gistList",
           "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "gist-editor.createGistFromFile",
+          "when": "editorHasSelection == false",
+          "group": "gist@1"
+        },
+        {
+          "command": "gist-editor.createGistFromSelection",
+          "when": "editorHasSelection",
+          "group": "gist@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "gist-editor.createGistFromFile",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "gist-editor.createGistFromSelection",
+          "when": "editorHasSelection"
         }
       ]
     },
@@ -110,6 +140,23 @@
         "key": "ctrl+alt+s",
         "mac": "cmd+alt+s",
         "when": "editorTextFocus && resourceScheme == gist"
+      },
+      {
+        "command": "gist-editor.createGist",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
+      },
+      {
+        "command": "gist-editor.createGistFromFile",
+        "key": "ctrl+alt+shift+g",
+        "mac": "cmd+alt+shift+g",
+        "when": "editorIsOpen"
+      },
+      {
+        "command": "gist-editor.createGistFromSelection",
+        "key": "ctrl+alt+shift+s",
+        "mac": "cmd+alt+shift+s",
+        "when": "editorHasSelection"
       }
     ]
   },

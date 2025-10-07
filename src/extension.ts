@@ -202,8 +202,144 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage('Gists refreshed!');
 	});
 
-	const createGistCommand = vscode.commands.registerCommand('gist-editor.createGist', () => {
-		vscode.window.showInformationMessage('Create new gist functionality coming soon!');
+	const createGistCommand = vscode.commands.registerCommand('gist-editor.createGist', async () => {
+		if (!githubService.isAuthenticated()) {
+			const setup = await vscode.window.showErrorMessage(
+				'GitHub token not configured. Please set up your token first.',
+				'Setup Token'
+			);
+			if (setup === 'Setup Token') {
+				vscode.commands.executeCommand('gist-editor.setupToken');
+			}
+			return;
+		}
+
+		try {
+			// Ask for creation method
+			const method = await vscode.window.showQuickPick([
+				{
+					label: '$(file-text) Create from current file',
+					description: 'Create gist from the currently open file',
+					detail: 'current-file'
+				},
+				{
+					label: '$(file-add) Create from selection',
+					description: 'Create gist from selected text in current file',
+					detail: 'selection'
+				},
+				{
+					label: '$(new-file) Create empty gist',
+					description: 'Create a new empty gist',
+					detail: 'empty'
+				},
+				{
+					label: '$(files) Create multi-file gist',
+					description: 'Create gist with multiple files',
+					detail: 'multi-file'
+				}
+			], {
+				placeHolder: 'How would you like to create your gist?',
+				ignoreFocusOut: true
+			});
+
+			if (!method) {
+				return;
+			}
+
+			let files: { [filename: string]: { content: string } } = {};
+			let defaultDescription = '';
+
+			switch (method.detail) {
+				case 'current-file':
+					files = await createFromCurrentFile();
+					defaultDescription = `Gist from ${Object.keys(files)[0] || 'file'}`;
+					break;
+				case 'selection':
+					files = await createFromSelection();
+					defaultDescription = 'Code snippet';
+					break;
+				case 'empty':
+					files = await createEmptyGist();
+					defaultDescription = 'New gist';
+					break;
+				case 'multi-file':
+					files = await createMultiFileGist();
+					defaultDescription = 'Multi-file gist';
+					break;
+			}
+
+			if (Object.keys(files).length === 0) {
+				return;
+			}
+
+			// Get gist description
+			const description = await vscode.window.showInputBox({
+				prompt: 'Enter a description for your gist',
+				value: defaultDescription,
+				placeHolder: 'Gist description (optional)',
+				ignoreFocusOut: true
+			});
+
+			// Ask if gist should be public
+			const visibility = await vscode.window.showQuickPick([
+				{
+					label: '$(lock) Private',
+					description: 'Only you can see this gist',
+					detail: 'private'
+				},
+				{
+					label: '$(globe) Public',
+					description: 'Anyone can see this gist',
+					detail: 'public'
+				}
+			], {
+				placeHolder: 'Choose gist visibility',
+				ignoreFocusOut: true
+			});
+
+			if (!visibility) {
+				return;
+			}
+
+			const isPublic = visibility.detail === 'public';
+
+			// Create the gist
+			vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: 'Creating gist...',
+				cancellable: false
+			}, async () => {
+				const newGist = await githubService.createGist(description || '', files, isPublic);
+				
+				// Refresh the gist list
+				myGistsProvider.refresh();
+				
+				// Show success message with options
+				const action = await vscode.window.showInformationMessage(
+					`Gist created successfully! ${isPublic ? '(Public)' : '(Private)'}`,
+					'Open Gist',
+					'Copy URL',
+					'Edit Now'
+				);
+
+				if (action === 'Open Gist') {
+					vscode.env.openExternal(vscode.Uri.parse(newGist.html_url));
+				} else if (action === 'Copy URL') {
+					vscode.env.clipboard.writeText(newGist.html_url);
+					vscode.window.showInformationMessage('Gist URL copied to clipboard!');
+				} else if (action === 'Edit Now') {
+					// Open the first file for editing
+					const firstFile = Object.values(newGist.files)[0];
+					if (firstFile) {
+						await openGistFile(newGist, firstFile);
+					}
+				}
+			});
+
+		} catch (error) {
+			console.error('Error creating gist:', error);
+			vscode.window.showErrorMessage(`Failed to create gist: ${error}`);
+		}
 	});
 
 	const openGistCommand = vscode.commands.registerCommand('gist-editor.openGist', async (gist?: Gist) => {
@@ -301,6 +437,268 @@ export function activate(context: vscode.ExtensionContext) {
 			'Text': 'plaintext'
 		};
 		return languageMap[githubLanguage] || 'plaintext';
+	}
+
+	// Helper functions for creating gists
+	async function createFromCurrentFile(): Promise<{ [filename: string]: { content: string } }> {
+		const activeEditor = vscode.window.activeTextEditor;
+		if (!activeEditor) {
+			vscode.window.showErrorMessage('No file is currently open');
+			return {};
+		}
+
+		const document = activeEditor.document;
+		const content = document.getText();
+		
+		if (!content.trim()) {
+			vscode.window.showErrorMessage('Current file is empty');
+			return {};
+		}
+
+		// Get filename from document
+		const fileName = document.fileName.split(/[/\\]/).pop() || 'untitled.txt';
+		
+		return {
+			[fileName]: { content }
+		};
+	}
+
+	async function createFromSelection(): Promise<{ [filename: string]: { content: string } }> {
+		const activeEditor = vscode.window.activeTextEditor;
+		if (!activeEditor) {
+			vscode.window.showErrorMessage('No file is currently open');
+			return {};
+		}
+
+		const selection = activeEditor.selection;
+		const selectedText = activeEditor.document.getText(selection);
+		
+		if (!selectedText.trim()) {
+			vscode.window.showErrorMessage('No text is selected');
+			return {};
+		}
+
+		// Get file extension from current document
+		const document = activeEditor.document;
+		const fileName = document.fileName.split(/[/\\]/).pop() || 'untitled.txt';
+		const extension = fileName.split('.').pop() || 'txt';
+		
+		const gistFileName = await vscode.window.showInputBox({
+			prompt: 'Enter filename for the selected code',
+			value: `snippet.${extension}`,
+			placeHolder: 'filename.ext',
+			ignoreFocusOut: true
+		});
+
+		if (!gistFileName) {
+			return {};
+		}
+
+		return {
+			[gistFileName]: { content: selectedText }
+		};
+	}
+
+	async function createEmptyGist(): Promise<{ [filename: string]: { content: string } }> {
+		const fileName = await vscode.window.showInputBox({
+			prompt: 'Enter filename for your new gist',
+			value: 'untitled.txt',
+			placeHolder: 'filename.ext',
+			ignoreFocusOut: true,
+			validateInput: (value) => {
+				if (!value.trim()) {
+					return 'Filename cannot be empty';
+				}
+				return null;
+			}
+		});
+
+		if (!fileName) {
+			return {};
+		}
+
+		const content = await vscode.window.showInputBox({
+			prompt: 'Enter initial content (optional)',
+			value: '',
+			placeHolder: 'Initial file content...',
+			ignoreFocusOut: true
+		});
+
+		return {
+			[fileName]: { content: content || '' }
+		};
+	}
+
+	async function createMultiFileGist(): Promise<{ [filename: string]: { content: string } }> {
+		const files: { [filename: string]: { content: string } } = {};
+		
+		while (true) {
+			const fileName = await vscode.window.showInputBox({
+				prompt: `Enter filename for file #${Object.keys(files).length + 1} (or press Escape to finish)`,
+				placeHolder: 'filename.ext',
+				ignoreFocusOut: true,
+				validateInput: (value) => {
+					if (!value.trim()) {
+						return 'Filename cannot be empty';
+					}
+					if (files[value]) {
+						return 'Filename already exists';
+					}
+					return null;
+				}
+			});
+
+			if (!fileName) {
+				break; // User cancelled or finished
+			}
+
+			const content = await vscode.window.showInputBox({
+				prompt: `Enter content for ${fileName}`,
+				value: '',
+				placeHolder: 'File content...',
+				ignoreFocusOut: true
+			});
+
+			files[fileName] = { content: content || '' };
+
+			// Ask if user wants to add more files
+			const addMore = await vscode.window.showQuickPick([
+				{ label: 'Yes', detail: 'add-more' },
+				{ label: 'No, create gist now', detail: 'finish' }
+			], {
+				placeHolder: 'Add another file?',
+				ignoreFocusOut: true
+			});
+
+			if (!addMore || addMore.detail === 'finish') {
+				break;
+			}
+		}
+
+		if (Object.keys(files).length === 0) {
+			vscode.window.showInformationMessage('No files added. Gist creation cancelled.');
+		}
+
+		return files;
+	}
+
+	// Command to create gist from current file
+	const createGistFromFileCommand = vscode.commands.registerCommand('gist-editor.createGistFromFile', async () => {
+		if (!githubService.isAuthenticated()) {
+			const setup = await vscode.window.showErrorMessage(
+				'GitHub token not configured. Please set up your token first.',
+				'Setup Token'
+			);
+			if (setup === 'Setup Token') {
+				vscode.commands.executeCommand('gist-editor.setupToken');
+			}
+			return;
+		}
+
+		try {
+			const files = await createFromCurrentFile();
+			if (Object.keys(files).length === 0) {
+				return;
+			}
+
+			await createGistFromFiles(files, `Gist from ${Object.keys(files)[0]}`);
+		} catch (error) {
+			console.error('Error creating gist from file:', error);
+			vscode.window.showErrorMessage(`Failed to create gist: ${error}`);
+		}
+	});
+
+	// Command to create gist from selection
+	const createGistFromSelectionCommand = vscode.commands.registerCommand('gist-editor.createGistFromSelection', async () => {
+		if (!githubService.isAuthenticated()) {
+			const setup = await vscode.window.showErrorMessage(
+				'GitHub token not configured. Please set up your token first.',
+				'Setup Token'
+			);
+			if (setup === 'Setup Token') {
+				vscode.commands.executeCommand('gist-editor.setupToken');
+			}
+			return;
+		}
+
+		try {
+			const files = await createFromSelection();
+			if (Object.keys(files).length === 0) {
+				return;
+			}
+
+			await createGistFromFiles(files, 'Code snippet');
+		} catch (error) {
+			console.error('Error creating gist from selection:', error);
+			vscode.window.showErrorMessage(`Failed to create gist: ${error}`);
+		}
+	});
+
+	// Helper function to create gist from files
+	async function createGistFromFiles(files: { [filename: string]: { content: string } }, defaultDescription: string) {
+		// Get gist description
+		const description = await vscode.window.showInputBox({
+			prompt: 'Enter a description for your gist',
+			value: defaultDescription,
+			placeHolder: 'Gist description (optional)',
+			ignoreFocusOut: true
+		});
+
+		// Ask if gist should be public
+		const visibility = await vscode.window.showQuickPick([
+			{
+				label: '$(lock) Private',
+				description: 'Only you can see this gist',
+				detail: 'private'
+			},
+			{
+				label: '$(globe) Public',
+				description: 'Anyone can see this gist',
+				detail: 'public'
+			}
+		], {
+			placeHolder: 'Choose gist visibility',
+			ignoreFocusOut: true
+		});
+
+		if (!visibility) {
+			return;
+		}
+
+		const isPublic = visibility.detail === 'public';
+
+		// Create the gist
+		await vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: 'Creating gist...',
+			cancellable: false
+		}, async () => {
+			const newGist = await githubService.createGist(description || '', files, isPublic);
+			
+			// Refresh the gist list
+			myGistsProvider.refresh();
+			
+			// Show success message with options
+			const action = await vscode.window.showInformationMessage(
+				`Gist created successfully! ${isPublic ? '(Public)' : '(Private)'}`,
+				'Open Gist',
+				'Copy URL',
+				'Edit Now'
+			);
+
+			if (action === 'Open Gist') {
+				vscode.env.openExternal(vscode.Uri.parse(newGist.html_url));
+			} else if (action === 'Copy URL') {
+				vscode.env.clipboard.writeText(newGist.html_url);
+				vscode.window.showInformationMessage('Gist URL copied to clipboard!');
+			} else if (action === 'Edit Now') {
+				// Open the first file for editing
+				const firstFile = Object.values(newGist.files)[0];
+				if (firstFile) {
+					await openGistFile(newGist, firstFile);
+				}
+			}
+		});
 	}
 
 	// Command to open a specific gist file
@@ -490,6 +888,8 @@ export function activate(context: vscode.ExtensionContext) {
 		helloWorldCommand,
 		refreshCommand,
 		createGistCommand,
+		createGistFromFileCommand,
+		createGistFromSelectionCommand,
 		openGistCommand,
 		openGistFileCommand,
 		setupTokenCommand,
