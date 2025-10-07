@@ -3,27 +3,76 @@
 import * as vscode from 'vscode';
 import { GitHubService, Gist } from './githubService';
 
+// Content provider for gist files
+class GistContentProvider implements vscode.TextDocumentContentProvider {
+	private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+	public readonly onDidChange = this._onDidChange.event;
+
+	private gistCache = new Map<string, Gist>();
+
+	constructor(private githubService: GitHubService) {}
+
+	async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+		const [gistId, filename] = uri.path.substring(1).split('/');
+		
+		try {
+			// Try to get from cache first
+			let gist = this.gistCache.get(gistId);
+			if (!gist) {
+				gist = await this.githubService.getGist(gistId);
+				this.gistCache.set(gistId, gist);
+			}
+
+			const file = gist.files[filename];
+			if (!file) {
+				throw new Error(`File ${filename} not found in gist`);
+			}
+
+			return file.content || '';
+		} catch (error) {
+			console.error('Error loading gist content:', error);
+			return `Error loading gist content: ${error}`;
+		}
+	}
+
+	public invalidateCache(gistId: string) {
+		this.gistCache.delete(gistId);
+		// Trigger refresh for all gist URIs
+		this._onDidChange.fire(vscode.Uri.parse(`gist:/${gistId}`));
+	}
+}
+
 // Gist item for the tree view
 class GistItem extends vscode.TreeItem {
 	constructor(
 		public readonly gist: Gist,
-		public readonly collapsibleState: vscode.TreeItemCollapsibleState
+		public readonly file?: any,
+		public readonly collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None
 	) {
-		super(gist.description || '(No description)', collapsibleState);
-		
-		this.tooltip = `${gist.description}\nCreated: ${new Date(gist.created_at).toLocaleDateString()}\nFiles: ${Object.keys(gist.files).length}`;
-		this.contextValue = 'gist';
-		this.iconPath = gist.public ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
-		this.command = {
-			command: 'gist-editor.openGist',
-			title: 'Open Gist',
-			arguments: [gist]
-		};
-		
-		// Show file count and visibility
-		const fileCount = Object.keys(gist.files).length;
-		const visibility = gist.public ? 'Public' : 'Private';
-		this.description = `${fileCount} file${fileCount !== 1 ? 's' : ''} • ${visibility}`;
+		// If this is a file item, show the filename
+		if (file) {
+			super(file.filename, vscode.TreeItemCollapsibleState.None);
+			this.tooltip = `${file.filename}\nLanguage: ${file.language}\nSize: ${file.size} bytes`;
+			this.contextValue = 'gistFile';
+			this.iconPath = vscode.ThemeIcon.File;
+			this.command = {
+				command: 'gist-editor.openGistFile',
+				title: 'Open File',
+				arguments: [gist, file]
+			};
+			this.description = `${file.language} • ${file.size} bytes`;
+		} else {
+			// This is a gist container
+			super(gist.description || '(No description)', collapsibleState);
+			this.tooltip = `${gist.description}\nCreated: ${new Date(gist.created_at).toLocaleDateString()}\nFiles: ${Object.keys(gist.files).length}`;
+			this.contextValue = 'gist';
+			this.iconPath = gist.public ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
+			
+			// Show file count and visibility
+			const fileCount = Object.keys(gist.files).length;
+			const visibility = gist.public ? 'Public' : 'Private';
+			this.description = `${fileCount} file${fileCount !== 1 ? 's' : ''} • ${visibility}`;
+		}
 	}
 }
 
@@ -61,12 +110,23 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 				}
 
 				console.log(`Found ${gists.length} ${this.gistType} gists`);
-				return gists.map(gist => new GistItem(gist, vscode.TreeItemCollapsibleState.None));
+				// Show gists as expandable if they have multiple files, otherwise collapsed
+				return gists.map(gist => {
+					const fileCount = Object.keys(gist.files).length;
+					const collapsibleState = fileCount > 1 ? 
+						vscode.TreeItemCollapsibleState.Collapsed : 
+						vscode.TreeItemCollapsibleState.None;
+					return new GistItem(gist, undefined, collapsibleState);
+				});
 			} catch (error) {
 				console.error(`Error loading ${this.gistType} gists:`, error);
 				vscode.window.showErrorMessage(`Failed to load ${this.gistType} gists: ${error}`);
 				return [this.createErrorItem(error instanceof Error ? error.message : 'Unknown error')];
 			}
+		} else if (element.contextValue === 'gist') {
+			// Show files for expanded gist
+			const files = Object.values(element.gist.files);
+			return files.map(file => new GistItem(element.gist, file));
 		}
 		return [];
 	}
@@ -81,7 +141,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 			html_url: '',
 			files: {}
 		};
-		const item = new GistItem(mockGist, vscode.TreeItemCollapsibleState.None);
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None);
 		item.command = {
 			command: 'gist-editor.setupToken',
 			title: 'Setup GitHub Token'
@@ -100,7 +160,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 			html_url: '',
 			files: {}
 		};
-		const item = new GistItem(mockGist, vscode.TreeItemCollapsibleState.None);
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None);
 		item.iconPath = new vscode.ThemeIcon('error');
 		return item;
 	}
@@ -116,6 +176,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Create GitHub service
 	const githubService = new GitHubService();
+
+	// Create gist content provider
+	const gistContentProvider = new GistContentProvider(githubService);
+	context.subscriptions.push(
+		vscode.workspace.registerTextDocumentContentProvider('gist', gistContentProvider)
+	);
 
 	// Create tree data providers
 	const myGistsProvider = new GistProvider('my', githubService);
@@ -140,12 +206,106 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage('Create new gist functionality coming soon!');
 	});
 
-	const openGistCommand = vscode.commands.registerCommand('gist-editor.openGist', (gist?: Gist) => {
-		if (gist) {
-			vscode.env.openExternal(vscode.Uri.parse(gist.html_url));
-		} else {
+	const openGistCommand = vscode.commands.registerCommand('gist-editor.openGist', async (gist?: Gist) => {
+		if (!gist) {
 			vscode.window.showInformationMessage('No gist selected');
+			return;
 		}
+
+		try {
+			// Get full gist details with file contents
+			const fullGist = await githubService.getGist(gist.id);
+			
+			// Open each file in the gist
+			const files = Object.values(fullGist.files);
+			
+			if (files.length === 0) {
+				vscode.window.showInformationMessage('This gist has no files');
+				return;
+			}
+
+			// If multiple files, ask which one to open first
+			if (files.length > 1) {
+				const selectedFile = await vscode.window.showQuickPick(
+					files.map(file => ({
+						label: file.filename,
+						description: `${file.language} • ${file.size} bytes`,
+						detail: file.filename,
+						file: file
+					})),
+					{
+						placeHolder: 'Select a file to open',
+						ignoreFocusOut: true
+					}
+				);
+
+				if (selectedFile) {
+					await openGistFile(fullGist, selectedFile.file);
+				}
+			} else {
+				// Open the single file
+				await openGistFile(fullGist, files[0]);
+			}
+		} catch (error) {
+			console.error('Error opening gist:', error);
+			vscode.window.showErrorMessage(`Failed to open gist: ${error}`);
+		}
+	});
+
+	async function openGistFile(gist: Gist, file: any) {
+		try {
+			// Create a custom URI scheme for gist files
+			const uri = vscode.Uri.parse(`gist:/${gist.id}/${file.filename}`);
+
+			// Open the document
+			const document = await vscode.workspace.openTextDocument(uri);
+			const editor = await vscode.window.showTextDocument(document);
+			
+			// Set the language mode based on file extension
+			if (file.language && file.language !== 'Text') {
+				await vscode.languages.setTextDocumentLanguage(document, getLanguageId(file.language));
+			}
+
+			vscode.window.showInformationMessage(`Opened ${file.filename} from gist "${gist.description || 'Untitled'}"`);
+		} catch (error) {
+			console.error('Error opening gist file:', error);
+			vscode.window.showErrorMessage(`Failed to open file: ${error}`);
+		}
+	}
+
+	function getLanguageId(githubLanguage: string): string {
+		const languageMap: { [key: string]: string } = {
+			'JavaScript': 'javascript',
+			'TypeScript': 'typescript',
+			'Python': 'python',
+			'Java': 'java',
+			'C++': 'cpp',
+			'C': 'c',
+			'C#': 'csharp',
+			'HTML': 'html',
+			'CSS': 'css',
+			'JSON': 'json',
+			'Markdown': 'markdown',
+			'Shell': 'shellscript',
+			'PowerShell': 'powershell',
+			'SQL': 'sql',
+			'XML': 'xml',
+			'YAML': 'yaml',
+			'PHP': 'php',
+			'Ruby': 'ruby',
+			'Go': 'go',
+			'Rust': 'rust',
+			'Swift': 'swift',
+			'Kotlin': 'kotlin',
+			'Dart': 'dart',
+			'Text': 'plaintext'
+		};
+		return languageMap[githubLanguage] || 'plaintext';
+	}
+
+	// Command to open a specific gist file
+	const openGistFileCommand = vscode.commands.registerCommand('gist-editor.openGistFile', async (gist: Gist, file: any) => {
+		await openGistFile(gist, file);
 	});
 
 	const setupTokenCommand = vscode.commands.registerCommand('gist-editor.setupToken', async () => {
@@ -268,14 +428,74 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// Save gist command
+	const saveGistCommand = vscode.commands.registerCommand('gist-editor.saveGist', async () => {
+		const activeEditor = vscode.window.activeTextEditor;
+		if (!activeEditor) {
+			vscode.window.showErrorMessage('No active editor');
+			return;
+		}
+
+		const document = activeEditor.document;
+		if (document.uri.scheme !== 'gist') {
+			vscode.window.showErrorMessage('This is not a gist file');
+			return;
+		}
+
+		const [gistId, filename] = document.uri.path.substring(1).split('/');
+		const content = document.getText();
+
+		try {
+			await githubService.updateGist(gistId, undefined, {
+				[filename]: { content }
+			});
+
+			// Clear cache and refresh
+			gistContentProvider.invalidateCache(gistId);
+			myGistsProvider.refresh();
+			
+			vscode.window.showInformationMessage(`Saved ${filename} to gist successfully!`);
+		} catch (error) {
+			console.error('Error saving gist:', error);
+			vscode.window.showErrorMessage(`Failed to save gist: ${error}`);
+		}
+	});
+
+	// Listen for document saves to auto-save gists
+	const saveListener = vscode.workspace.onDidSaveTextDocument(async (document) => {
+		if (document.uri.scheme === 'gist') {
+			// Auto-save gist when user presses Ctrl+S
+			const [gistId, filename] = document.uri.path.substring(1).split('/');
+			const content = document.getText();
+
+			try {
+				await githubService.updateGist(gistId, undefined, {
+					[filename]: { content }
+				});
+
+				// Clear cache and refresh
+				gistContentProvider.invalidateCache(gistId);
+				myGistsProvider.refresh();
+				
+				vscode.window.setStatusBarMessage(`✓ Saved ${filename} to gist`, 3000);
+			} catch (error) {
+				console.error('Error auto-saving gist:', error);
+				vscode.window.showErrorMessage(`Failed to save gist: ${error}`);
+			}
+		}
+	});
+
 	// Add all commands to subscriptions
 	context.subscriptions.push(
 		helloWorldCommand,
 		refreshCommand,
 		createGistCommand,
 		openGistCommand,
+		openGistFileCommand,
 		setupTokenCommand,
-		testApiCommand
+		testApiCommand,
+		saveGistCommand,
+		saveListener
 	);
 }
 

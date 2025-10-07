@@ -66,6 +66,11 @@
         "command": "gist-editor.testAPI",
         "title": "Test GitHub API",
         "icon": "$(debug)"
+      },
+      {
+        "command": "gist-editor.saveGist",
+        "title": "Save Gist",
+        "icon": "$(save)"
       }
     ],
     "menus": {
@@ -98,7 +103,15 @@
           "scope": "application"
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "gist-editor.saveGist",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "editorTextFocus && resourceScheme == gist"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
