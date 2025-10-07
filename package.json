@@ -12,12 +12,64 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gist-editor",
+          "title": "Gist Editor",
+          "icon": "$(github)"
+        }
+      ]
+    },
+    "views": {
+      "gist-editor": [
+        {
+          "id": "gist-editor.gistList",
+          "name": "My Gists",
+          "when": "true"
+        },
+        {
+          "id": "gist-editor.starred",
+          "name": "Starred Gists",
+          "when": "true"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "gist-editor.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "gist-editor.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gist-editor.createGist",
+        "title": "Create New Gist",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gist-editor.openGist",
+        "title": "Open Gist",
+        "icon": "$(globe)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "gist-editor.refresh",
+          "when": "view == gist-editor.gistList",
+          "group": "navigation"
+        },
+        {
+          "command": "gist-editor.createGist",
+          "when": "view == gist-editor.gistList",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

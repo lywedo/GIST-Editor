@@ -15,13 +15,23 @@
             "group": {
                 "kind": "build",
                 "isDefault": true
-            }
+            },
+            "dependsOrder": "parallel"
         },
         {
             "type": "npm",
             "script": "watch:esbuild",
             "group": "build",
-            "problemMatcher": "$esbuild-watch",
+            "problemMatcher": [
+                {
+                    "base": "$esbuild",
+                    "background": {
+                        "activeOnStart": true,
+                        "beginsPattern": "^\\[watch\\] build started$",
+                        "endsPattern": "^\\[watch\\] build finished$"
+                    }
+                }
+            ],
             "isBackground": true,
             "label": "npm: watch:esbuild",
             "presentation": {
@@ -40,25 +50,6 @@
                 "group": "watch",
                 "reveal": "never"
             }
-        },
-		{
-			"type": "npm",
-			"script": "watch-tests",
-			"problemMatcher": "$tsc-watch",
-			"isBackground": true,
-			"presentation": {
-				"reveal": "never",
-				"group": "watchers"
-			},
-			"group": "build"
-		},
-		{
-			"label": "tasks: watch-tests",
-			"dependsOn": [
-				"npm: watch",
-				"npm: watch-tests"
-			],
-			"problemMatcher": []
-		}
+        }
 	]
 }
