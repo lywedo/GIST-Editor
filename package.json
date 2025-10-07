@@ -26,12 +26,14 @@
         {
           "id": "gist-editor.gistList",
           "name": "My Gists",
-          "when": "true"
+          "when": "true",
+          "icon": "$(person)"
         },
         {
           "id": "gist-editor.starred",
           "name": "Starred Gists",
-          "when": "true"
+          "when": "true",
+          "icon": "$(star)"
         }
       ]
     },
@@ -54,6 +56,16 @@
         "command": "gist-editor.openGist",
         "title": "Open Gist",
         "icon": "$(globe)"
+      },
+      {
+        "command": "gist-editor.setupToken",
+        "title": "Configure GitHub Token",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "gist-editor.testAPI",
+        "title": "Test GitHub API",
+        "icon": "$(debug)"
       }
     ],
     "menus": {
@@ -67,8 +79,25 @@
           "command": "gist-editor.createGist",
           "when": "view == gist-editor.gistList",
           "group": "navigation"
+        },
+        {
+          "command": "gist-editor.setupToken",
+          "when": "view == gist-editor.gistList",
+          "group": "navigation"
         }
       ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "Gist Editor",
+      "properties": {
+        "gistEditor.githubToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub Personal Access Token for accessing gists",
+          "scope": "application"
+        }
+      }
     }
   },
   "scripts": {
@@ -86,16 +115,20 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.104.0",
+    "@types/axios": "^0.14.4",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
+    "@types/vscode": "^1.104.0",
     "@typescript-eslint/eslint-plugin": "^8.45.0",
     "@typescript-eslint/parser": "^8.45.0",
-    "eslint": "^9.36.0",
-    "esbuild": "^0.25.10",
-    "npm-run-all": "^4.1.5",
-    "typescript": "^5.9.3",
     "@vscode/test-cli": "^0.0.11",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.25.10",
+    "eslint": "^9.36.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "axios": "^1.12.2"
   }
 }
