@@ -84,6 +84,31 @@
       {
         "command": "gist-editor.createGistFromSelection",
         "title": "Create Gist from Selection"
+      },
+      {
+        "command": "gist-editor.deleteGist",
+        "title": "Delete Gist",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gist-editor.renameGist",
+        "title": "Rename Gist",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gist-editor.addFileToGist",
+        "title": "Add File to Gist",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "gist-editor.deleteFileFromGist",
+        "title": "Delete File from Gist",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gist-editor.renameFileInGist",
+        "title": "Rename File in Gist",
+        "icon": "$(edit)"
       }
     ],
     "menus": {
@@ -124,6 +149,38 @@
         {
           "command": "gist-editor.createGistFromSelection",
           "when": "editorHasSelection"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "gist-editor.addFileToGist",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "inline"
+        },
+        {
+          "command": "gist-editor.renameGist",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "gist-editor.addFileToGist",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "1_modification@2"
+        },
+        {
+          "command": "gist-editor.deleteGist",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "2_danger@1"
+        },
+        {
+          "command": "gist-editor.renameFileInGist",
+          "when": "view == gist-editor.gistList && viewItem == gistFile",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "gist-editor.deleteFileFromGist",
+          "when": "view == gist-editor.gistList && viewItem == gistFile",
+          "group": "2_danger@1"
         }
       ]
     },

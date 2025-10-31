@@ -1422,6 +1422,213 @@ export function activate(context: vscode.ExtensionContext) {
 	// Note: Auto-save is now handled automatically by the FileSystemProvider
 	// No need for a separate save listener
 
+	// Delete gist command
+	const deleteGistCommand = vscode.commands.registerCommand('gist-editor.deleteGist', async (gistItem: GistItem) => {
+		if (!gistItem || !gistItem.gist) {
+			vscode.window.showErrorMessage('No gist selected');
+			return;
+		}
+
+		const gist = gistItem.gist;
+		const gistDescription = gist.description || 'Untitled';
+		
+		const confirmation = await vscode.window.showWarningMessage(
+			`Are you sure you want to delete "${gistDescription}"?`,
+			{ modal: true },
+			'Delete'
+		);
+
+		if (confirmation !== 'Delete') {
+			return;
+		}
+
+		try {
+			await githubService.deleteGist(gist.id);
+			myGistsProvider.refresh();
+			vscode.window.showInformationMessage(`✓ Deleted gist "${gistDescription}"`);
+		} catch (error) {
+			console.error('Error deleting gist:', error);
+			vscode.window.showErrorMessage(`Failed to delete gist: ${error}`);
+		}
+	});
+
+	// Rename gist command
+	const renameGistCommand = vscode.commands.registerCommand('gist-editor.renameGist', async (gistItem: GistItem) => {
+		if (!gistItem || !gistItem.gist) {
+			vscode.window.showErrorMessage('No gist selected');
+			return;
+		}
+
+		const gist = gistItem.gist;
+		const currentDescription = gist.description || '';
+
+		const newDescription = await vscode.window.showInputBox({
+			prompt: 'Enter new description for the gist',
+			value: currentDescription,
+			placeHolder: 'Gist description'
+		});
+
+		if (newDescription === undefined) {
+			return; // User cancelled
+		}
+
+		try {
+			await githubService.updateGist(gist.id, newDescription);
+			myGistsProvider.refresh();
+			vscode.window.showInformationMessage(`✓ Renamed gist to "${newDescription}"`);
+		} catch (error) {
+			console.error('Error renaming gist:', error);
+			vscode.window.showErrorMessage(`Failed to rename gist: ${error}`);
+		}
+	});
+
+	// Add file to gist command
+	const addFileToGistCommand = vscode.commands.registerCommand('gist-editor.addFileToGist', async (gistItem: GistItem) => {
+		if (!gistItem || !gistItem.gist) {
+			vscode.window.showErrorMessage('No gist selected');
+			return;
+		}
+
+		const gist = gistItem.gist;
+
+		const filename = await vscode.window.showInputBox({
+			prompt: 'Enter filename (with extension)',
+			placeHolder: 'example.txt',
+			validateInput: (value) => {
+				if (!value || value.trim().length === 0) {
+					return 'Filename cannot be empty';
+				}
+				if (gist.files[value]) {
+					return 'A file with this name already exists in the gist';
+				}
+				return null;
+			}
+		});
+
+		if (!filename) {
+			return; // User cancelled
+		}
+
+		const content = await vscode.window.showInputBox({
+			prompt: 'Enter initial content for the file (optional)',
+			placeHolder: 'File content',
+			value: ''
+		});
+
+		if (content === undefined) {
+			return; // User cancelled
+		}
+
+		try {
+			await githubService.updateGist(gist.id, undefined, {
+				[filename]: { content: content || ' ' } // GitHub requires non-empty content
+			});
+			
+			gistFileSystemProvider.invalidateCache(gist.id);
+			myGistsProvider.refresh();
+			vscode.window.showInformationMessage(`✓ Added file "${filename}" to gist`);
+			
+			// Open the new file
+			const uri = vscode.Uri.parse(`gist:/${gist.id}/${encodeURIComponent(filename)}`);
+			await vscode.window.showTextDocument(uri);
+		} catch (error) {
+			console.error('Error adding file to gist:', error);
+			vscode.window.showErrorMessage(`Failed to add file: ${error}`);
+		}
+	});
+
+	// Delete file from gist command
+	const deleteFileFromGistCommand = vscode.commands.registerCommand('gist-editor.deleteFileFromGist', async (gistItem: GistItem) => {
+		if (!gistItem || !gistItem.file) {
+			vscode.window.showErrorMessage('No file selected');
+			return;
+		}
+
+		const gist = gistItem.gist;
+		const file = gistItem.file;
+		
+		const confirmation = await vscode.window.showWarningMessage(
+			`Are you sure you want to delete "${file.filename}" from this gist?`,
+			{ modal: true },
+			'Delete'
+		);
+
+		if (confirmation !== 'Delete') {
+			return;
+		}
+
+		try {
+			// To delete a file, set its content to null in the update
+			await githubService.updateGist(gist.id, undefined, {
+				[file.filename]: { content: null as any }
+			});
+			
+			gistFileSystemProvider.invalidateCache(gist.id);
+			myGistsProvider.refresh();
+			vscode.window.showInformationMessage(`✓ Deleted file "${file.filename}"`);
+		} catch (error) {
+			console.error('Error deleting file:', error);
+			vscode.window.showErrorMessage(`Failed to delete file: ${error}`);
+		}
+	});
+
+	// Rename file in gist command
+	const renameFileInGistCommand = vscode.commands.registerCommand('gist-editor.renameFileInGist', async (gistItem: GistItem) => {
+		if (!gistItem || !gistItem.file) {
+			vscode.window.showErrorMessage('No file selected');
+			return;
+		}
+
+		const gist = gistItem.gist;
+		const file = gistItem.file;
+		const oldFilename = file.filename;
+
+		const newFilename = await vscode.window.showInputBox({
+			prompt: 'Enter new filename',
+			value: oldFilename,
+			validateInput: (value) => {
+				if (!value || value.trim().length === 0) {
+					return 'Filename cannot be empty';
+				}
+				if (value !== oldFilename && gist.files[value]) {
+					return 'A file with this name already exists in the gist';
+				}
+				return null;
+			}
+		});
+
+		if (!newFilename || newFilename === oldFilename) {
+			return; // User cancelled or didn't change the name
+		}
+
+		try {
+			// GitHub API: rename by creating new file with same content and deleting old one
+			await githubService.updateGist(gist.id, undefined, {
+				[newFilename]: { content: file.content || ' ' },
+				[oldFilename]: { content: null as any }
+			});
+			
+			gistFileSystemProvider.invalidateCache(gist.id);
+			myGistsProvider.refresh();
+			vscode.window.showInformationMessage(`✓ Renamed "${oldFilename}" to "${newFilename}"`);
+			
+			// Close old document if open
+			const oldUri = vscode.Uri.parse(`gist:/${gist.id}/${encodeURIComponent(oldFilename)}`);
+			const openDoc = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === oldUri.toString());
+			if (openDoc) {
+				await vscode.window.showTextDocument(openDoc);
+				await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+			}
+			
+			// Open renamed file
+			const newUri = vscode.Uri.parse(`gist:/${gist.id}/${encodeURIComponent(newFilename)}`);
+			await vscode.window.showTextDocument(newUri);
+		} catch (error) {
+			console.error('Error renaming file:', error);
+			vscode.window.showErrorMessage(`Failed to rename file: ${error}`);
+		}
+	});
+
 	// Add all commands to subscriptions
 	context.subscriptions.push(
 		helloWorldCommand,
@@ -1434,7 +1641,12 @@ export function activate(context: vscode.ExtensionContext) {
 		setupTokenCommand,
 		testApiCommand,
 		checkScopesCommand,
-		saveGistCommand
+		saveGistCommand,
+		deleteGistCommand,
+		renameGistCommand,
+		addFileToGistCommand,
+		deleteFileFromGistCommand,
+		renameFileInGistCommand
 	);
 }
 
