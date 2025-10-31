@@ -110,13 +110,27 @@ class GistFileSystemProvider implements vscode.FileSystemProvider {
 
 // Gist item for the tree view
 class GistItem extends vscode.TreeItem {
+	// For group items (Public/Private categories)
+	public isGroup: boolean = false;
+	public groupType?: 'public' | 'private';
+
 	constructor(
 		public readonly gist: Gist,
 		public readonly file?: any,
-		public readonly collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None
+		public readonly collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
+		groupType?: 'public' | 'private'
 	) {
+		// If this is a group item (Public/Private category)
+		if (groupType) {
+			const label = groupType === 'public' ? '🌐 Public Gists' : '🔒 Private Gists';
+			super(label, vscode.TreeItemCollapsibleState.Collapsed);
+			this.contextValue = 'gistGroup';
+			this.isGroup = true;
+			this.groupType = groupType;
+			this.iconPath = groupType === 'public' ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
+		}
 		// If this is a file item, show the filename
-		if (file) {
+		else if (file) {
 			super(file.filename, vscode.TreeItemCollapsibleState.None);
 			this.tooltip = `${file.filename}\nLanguage: ${file.language}\nSize: ${file.size} bytes`;
 			this.contextValue = 'gistFile';
@@ -133,7 +147,7 @@ class GistItem extends vscode.TreeItem {
 			this.tooltip = `${gist.description}\nCreated: ${new Date(gist.created_at).toLocaleDateString()}\nFiles: ${Object.keys(gist.files).length}`;
 			this.contextValue = 'gist';
 			this.iconPath = gist.public ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
-			
+
 			// Show file count and visibility
 			const fileCount = Object.keys(gist.files).length;
 			const visibility = gist.public ? 'Public' : 'Private';
@@ -159,6 +173,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 
 	async getChildren(element?: GistItem): Promise<GistItem[]> {
 		if (!element) {
+			// Root level - show group categories
 			console.log(`Loading ${this.gistType} gists...`);
 			try {
 				if (!this.githubService.isAuthenticated()) {
@@ -176,17 +191,56 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 				}
 
 				console.log(`Found ${gists.length} ${this.gistType} gists`);
-				// Show all gists as collapsed (expandable) so users can see and open files
-				return gists.map(gist => {
-					return new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed);
-				});
+
+				// Check if we have both public and private gists
+				const hasPublic = gists.some(g => g.public);
+				const hasPrivate = gists.some(g => !g.public);
+
+				// Create group items only if we have gists of that type
+				const groups: GistItem[] = [];
+				if (hasPublic) {
+					groups.push(new GistItem(gists[0], undefined, vscode.TreeItemCollapsibleState.Collapsed, 'public'));
+				}
+				if (hasPrivate) {
+					groups.push(new GistItem(gists[0], undefined, vscode.TreeItemCollapsibleState.Collapsed, 'private'));
+				}
+
+				return groups;
 			} catch (error) {
 				console.error(`Error loading ${this.gistType} gists:`, error);
 				vscode.window.showErrorMessage(`Failed to load ${this.gistType} gists: ${error}`);
 				return [this.createErrorItem(error instanceof Error ? error.message : 'Unknown error')];
 			}
+		} else if (element.isGroup) {
+			// Group level - show gists of that visibility
+			console.log(`Loading ${element.groupType} gists...`);
+			try {
+				let gists: Gist[];
+				if (this.gistType === 'my') {
+					gists = await this.githubService.getMyGists();
+				} else {
+					gists = await this.githubService.getStarredGists();
+				}
+
+				// Filter gists by visibility
+				const filteredGists = gists.filter(g => {
+					if (element.groupType === 'public') {
+						return g.public;
+					} else {
+						return !g.public;
+					}
+				});
+
+				console.log(`Found ${filteredGists.length} ${element.groupType} gists`);
+				return filteredGists.map(gist => {
+					return new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed);
+				});
+			} catch (error) {
+				console.error(`Error loading ${element.groupType} gists:`, error);
+				return [];
+			}
 		} else if (element.contextValue === 'gist') {
-			// Show files for expanded gist
+			// Gist level - show files for expanded gist
 			const files = Object.values(element.gist.files);
 			return files.map(file => new GistItem(element.gist, file));
 		}
@@ -1648,25 +1702,6 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 			const viewGistHistoryCommand = vscode.commands.registerCommand('gist-editor.viewGistHistory', async (gistItem: GistItem) => {
-   const openInGitHubCommand = vscode.commands.registerCommand('gist-editor.openInGitHub', async (gistItem: GistItem) => {
-	   if (!gistItem) {
-		   vscode.window.showErrorMessage('No gist or file selected');
-		   return;
-	   }
-	   let url = '';
-	   if (gistItem.file) {
-		   // File: use raw_url if available, else fallback to gist HTML URL
-		   url = gistItem.file.raw_url || gistItem.gist.html_url;
-	   } else {
-		   // Gist: open gist page
-		   url = gistItem.gist.html_url;
-	   }
-	   if (!url) {
-		   vscode.window.showErrorMessage('No GitHub URL found for this item');
-		   return;
-	   }
-	   vscode.env.openExternal(vscode.Uri.parse(url));
-   });
 		if (!gistItem || gistItem.file) {
 			vscode.window.showErrorMessage('Please select a gist (not a file)');
 			return;
