@@ -140,7 +140,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	private createNotAuthenticatedItem(): GistItem {
 		const mockGist: Gist = {
 			id: 'not-authenticated',
-			description: 'Click to set up GitHub token',
+			description: 'Click here to sign in with GitHub',
 			public: false,
 			created_at: new Date().toISOString(),
 			updated_at: new Date().toISOString(),
@@ -150,9 +150,9 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None);
 		item.command = {
 			command: 'gist-editor.setupToken',
-			title: 'Setup GitHub Token'
+			title: 'Sign in with GitHub'
 		};
-		item.iconPath = new vscode.ThemeIcon('key');
+		item.iconPath = new vscode.ThemeIcon('github');
 		return item;
 	}
 
@@ -209,15 +209,20 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	const createGistCommand = vscode.commands.registerCommand('gist-editor.createGist', async () => {
+		// Ensure user is authenticated
 		if (!githubService.isAuthenticated()) {
-			const setup = await vscode.window.showErrorMessage(
-				'GitHub token not configured. Please set up your token first.',
-				'Setup Token'
-			);
-			if (setup === 'Setup Token') {
-				vscode.commands.executeCommand('gist-editor.setupToken');
+			try {
+				await githubService.getOAuthToken();
+			} catch (error) {
+				const setup = await vscode.window.showErrorMessage(
+					'You need to sign in with GitHub to create gists.',
+					'Sign in with GitHub'
+				);
+				if (setup === 'Sign in with GitHub') {
+					vscode.commands.executeCommand('gist-editor.setupToken');
+				}
+				return;
 			}
-			return;
 		}
 
 		try {
@@ -894,15 +899,20 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Command to create gist from current file
 	const createGistFromFileCommand = vscode.commands.registerCommand('gist-editor.createGistFromFile', async () => {
+		// Ensure user is authenticated
 		if (!githubService.isAuthenticated()) {
-			const setup = await vscode.window.showErrorMessage(
-				'GitHub token not configured. Please set up your token first.',
-				'Setup Token'
-			);
-			if (setup === 'Setup Token') {
-				vscode.commands.executeCommand('gist-editor.setupToken');
+			try {
+				await githubService.getOAuthToken();
+			} catch (error) {
+				const setup = await vscode.window.showErrorMessage(
+					'You need to sign in with GitHub to create gists.',
+					'Sign in with GitHub'
+				);
+				if (setup === 'Sign in with GitHub') {
+					vscode.commands.executeCommand('gist-editor.setupToken');
+				}
+				return;
 			}
-			return;
 		}
 
 		try {
@@ -920,15 +930,20 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Command to create gist from selection
 	const createGistFromSelectionCommand = vscode.commands.registerCommand('gist-editor.createGistFromSelection', async () => {
+		// Ensure user is authenticated
 		if (!githubService.isAuthenticated()) {
-			const setup = await vscode.window.showErrorMessage(
-				'GitHub token not configured. Please set up your token first.',
-				'Setup Token'
-			);
-			if (setup === 'Setup Token') {
-				vscode.commands.executeCommand('gist-editor.setupToken');
+			try {
+				await githubService.getOAuthToken();
+			} catch (error) {
+				const setup = await vscode.window.showErrorMessage(
+					'You need to sign in with GitHub to create gists.',
+					'Sign in with GitHub'
+				);
+				if (setup === 'Sign in with GitHub') {
+					vscode.commands.executeCommand('gist-editor.setupToken');
+				}
+				return;
 			}
-			return;
 		}
 
 		try {
@@ -1025,24 +1040,27 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const setupTokenCommand = vscode.commands.registerCommand('gist-editor.setupToken', async () => {
 		const isAuthenticated = githubService.isAuthenticated();
-		
+
 		// Show current status and options
 		const tokenStatus = githubService.getTokenStatus();
 		const action = await vscode.window.showQuickPick([
 			{
-				label: isAuthenticated ? '$(key) Change GitHub Token' : '$(key) Set GitHub Token',
-				description: isAuthenticated ? 'Update your current GitHub token' : 'Configure GitHub token to access your gists'
+				label: isAuthenticated ? '$(github) Sign in with GitHub' : '$(github) Sign in with GitHub',
+				description: isAuthenticated ? 'Sign in again or switch account' : 'Quick OAuth login - opens your browser',
+				detail: 'oauth'
 			},
 			{
-				label: '$(info) How to create a token',
-				description: 'Open GitHub token creation guide'
+				label: '$(key) Use Personal Access Token',
+				description: 'Manually enter a GitHub Personal Access Token',
+				detail: 'manual'
 			},
 			...(isAuthenticated ? [{
-				label: '$(trash) Remove Token',
-				description: 'Remove the current GitHub token'
+				label: '$(trash) Sign Out',
+				description: 'Sign out and remove GitHub authentication',
+				detail: 'logout'
 			}] : [])
 		], {
-			placeHolder: `Token Status: ${tokenStatus}`,
+			placeHolder: `Current Status: ${tokenStatus}`,
 			ignoreFocusOut: true
 		});
 
@@ -1050,36 +1068,70 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		if (action.label.includes('How to create')) {
-			// Open GitHub token creation page
-			vscode.env.openExternal(vscode.Uri.parse('https://github.com/settings/tokens/new?description=VSCode%20Gist%20Editor&scopes=gist'));
+		if (action.detail === 'oauth') {
+			// Use OAuth flow
+			try {
+				await vscode.window.withProgress({
+					location: vscode.ProgressLocation.Notification,
+					title: 'Signing in with GitHub...',
+					cancellable: false
+				}, async () => {
+					await githubService.getOAuthToken();
+
+					// Get username to confirm login
+					const username = await githubService.getCurrentUsername();
+
+					vscode.window.showInformationMessage(
+						`Successfully signed in as @${username}!`,
+						'Refresh Gists'
+					).then(selection => {
+						if (selection === 'Refresh Gists') {
+							myGistsProvider.refresh();
+							starredGistsProvider.refresh();
+						}
+					});
+
+					// Auto-refresh after successful authentication
+					myGistsProvider.refresh();
+					starredGistsProvider.refresh();
+				});
+			} catch (error) {
+				vscode.window.showErrorMessage(
+					`Failed to authenticate with GitHub: ${error}`,
+					'Try Again'
+				).then(selection => {
+					if (selection === 'Try Again') {
+						vscode.commands.executeCommand('gist-editor.setupToken');
+					}
+				});
+			}
 			return;
 		}
 
-		if (action.label.includes('Remove Token')) {
+		if (action.detail === 'logout') {
 			const confirm = await vscode.window.showWarningMessage(
-				'Are you sure you want to remove the GitHub token?',
+				'Are you sure you want to sign out?',
 				{ modal: true },
-				'Remove',
+				'Sign Out',
 				'Cancel'
 			);
-			
-			if (confirm === 'Remove') {
+
+			if (confirm === 'Sign Out') {
 				try {
 					await githubService.removeToken();
-					vscode.window.showInformationMessage('GitHub token removed successfully!');
+					vscode.window.showInformationMessage('You have been signed out!');
 					myGistsProvider.refresh();
 					starredGistsProvider.refresh();
 				} catch (error) {
-					vscode.window.showErrorMessage(`Failed to remove token: ${error}`);
+					vscode.window.showErrorMessage(`Failed to sign out: ${error}`);
 				}
 			}
 			return;
 		}
 
-		// Show input for token
+		// Manual token entry
 		const token = await vscode.window.showInputBox({
-			prompt: isAuthenticated ? 'Enter new GitHub Personal Access Token' : 'Enter your GitHub Personal Access Token',
+			prompt: 'Enter your GitHub Personal Access Token',
 			password: true,
 			placeHolder: 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
 			ignoreFocusOut: true,
@@ -1098,7 +1150,7 @@ export function activate(context: vscode.ExtensionContext) {
 			try {
 				await githubService.setToken(token);
 				vscode.window.showInformationMessage(
-					isAuthenticated ? 'GitHub token updated successfully!' : 'GitHub token configured successfully!',
+					'GitHub token configured successfully!',
 					'Refresh Gists'
 				).then(selection => {
 					if (selection === 'Refresh Gists') {
@@ -1106,7 +1158,7 @@ export function activate(context: vscode.ExtensionContext) {
 						starredGistsProvider.refresh();
 					}
 				});
-				
+
 				// Auto-refresh after successful token setup
 				myGistsProvider.refresh();
 				starredGistsProvider.refresh();

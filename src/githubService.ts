@@ -27,6 +27,7 @@ export interface Gist {
 export class GitHubService {
     private api: AxiosInstance;
     private token: string | undefined;
+    private currentUsername: string | undefined;
 
     constructor() {
         this.api = axios.create({
@@ -36,28 +37,46 @@ export class GitHubService {
                 'User-Agent': 'VSCode-Gist-Editor'
             }
         });
-        
+
         this.loadToken();
     }
 
     private loadToken(): void {
+        // First try to load from legacy config (backwards compatibility)
         const config = vscode.workspace.getConfiguration('gistEditor');
         this.token = config.get<string>('githubToken');
-        
+
         if (this.token) {
             this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+            console.log('GitHub token loaded from legacy config');
+        } else {
+            console.log('No legacy token found, will use OAuth via vscode.authentication');
         }
-        
-        console.log('GitHub token configured:', !!this.token);
+    }
+
+    public async getOAuthToken(): Promise<string> {
+        try {
+            const session = await vscode.authentication.getSession('github', ['gist'], { createIfNone: true });
+            if (session) {
+                this.token = session.accessToken;
+                this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+                console.log('GitHub OAuth token obtained successfully');
+                return this.token;
+            }
+        } catch (error) {
+            console.error('Failed to get GitHub session:', error);
+            throw new Error('Failed to authenticate with GitHub. Please try again.');
+        }
+        throw new Error('Failed to obtain GitHub OAuth token');
     }
 
     public async setToken(token: string): Promise<void> {
         this.token = token;
-        this.api.defaults.headers.common['Authorization'] = `token ${token}`;
-        
+        this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+
         const config = vscode.workspace.getConfiguration('gistEditor');
         await config.update('githubToken', token, vscode.ConfigurationTarget.Global);
-        
+
         console.log('GitHub token saved and configured');
     }
 
@@ -68,10 +87,10 @@ export class GitHubService {
     public async removeToken(): Promise<void> {
         this.token = undefined;
         delete this.api.defaults.headers.common['Authorization'];
-        
+
         const config = vscode.workspace.getConfiguration('gistEditor');
         await config.update('githubToken', undefined, vscode.ConfigurationTarget.Global);
-        
+
         console.log('GitHub token removed');
     }
 
@@ -82,6 +101,26 @@ export class GitHubService {
         // Show partial token for security
         const masked = this.token.substring(0, 8) + '...' + this.token.substring(this.token.length - 4);
         return `Configured (${masked})`;
+    }
+
+    public async getCurrentUsername(): Promise<string> {
+        if (this.currentUsername) {
+            return this.currentUsername;
+        }
+
+        if (!this.isAuthenticated()) {
+            throw new Error('Not authenticated');
+        }
+
+        try {
+            const response = await this.api.get('/user');
+            const username: string = response.data.login;
+            this.currentUsername = username;
+            return username;
+        } catch (error) {
+            console.error('Failed to fetch current user:', error);
+            throw new Error('Failed to fetch GitHub user information');
+        }
     }
 
     public async getMyGists(): Promise<Gist[]> {

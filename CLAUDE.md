@@ -12,9 +12,11 @@ Gist Editor is a VS Code extension that enables users to manage GitHub Gists dir
 
 **GitHubService** ([src/githubService.ts](src/githubService.ts))
 - Singleton service that manages all GitHub API interactions
-- Handles authentication via personal access tokens (stored in VS Code global config)
-- API methods: `getMyGists()`, `getStarredGists()`, `getGist()`, `createGist()`, `updateGist()`, `deleteGist()`
-- Token is stored securely in `gistEditor.githubToken` VS Code configuration
+- Handles authentication via VS Code's built-in GitHub OAuth (via `vscode.authentication.getSession()`)
+- Supports manual token entry as fallback (backwards compatibility)
+- API methods: `getMyGists()`, `getStarredGists()`, `getGist()`, `createGist()`, `updateGist()`, `deleteGist()`, `getOAuthToken()`, `getCurrentUsername()`
+- OAuth flow: Automatic browser-based GitHub login with `createIfNone: true`
+- Token is stored securely by VS Code's authentication system
 
 **GistContentProvider** ([src/extension.ts:7-49](src/extension.ts#L7-L49))
 - Custom `TextDocumentContentProvider` for the custom `gist://` URI scheme
@@ -86,11 +88,36 @@ npm run package
 - Tests use VS Code's test CLI (`@vscode/test-cli`)
 - Existing tests validate sample array operations; expand as needed
 
+## Authentication System
+
+The extension now uses **VS Code's built-in GitHub OAuth provider** for seamless authentication:
+
+### OAuth Flow (Primary)
+- User clicks "Sign in with GitHub" button
+- Browser opens automatically to GitHub login
+- VS Code handles the OAuth redirect and token exchange
+- Token is securely stored by VS Code's authentication system
+- No manual token management needed
+
+### Manual Token Entry (Fallback)
+- For advanced users or CI/CD scenarios
+- Token stored in `gistEditor.githubToken` config (backwards compatible)
+- Validated on input (must start with `ghp_` or `github_pat_`)
+
+### Setup Token Command (`gist-editor.setupToken`)
+- Quick pick menu with options:
+  1. **Sign in with GitHub** - Triggers OAuth flow (recommended)
+  2. **Use Personal Access Token** - Manual token entry
+  3. **Sign Out** - Remove current authentication
+
+### Automatic Authentication
+- Commands like `createGist` automatically trigger OAuth if not authenticated
+- No blocking error messages, seamless UX
+
 ## Key Configuration
 
 **VS Code Settings** (from `package.json`)
-- `gistEditor.githubToken`: Global setting storing GitHub Personal Access Token
-- Token is validated on input (must start with `ghp_` or `github_pat_`)
+- `gistEditor.githubToken`: Global setting for manual PAT (optional, backwards compatibility)
 - Configuration target: `GlobalStorage` (user-level, not workspace)
 
 **Extension Activation**
