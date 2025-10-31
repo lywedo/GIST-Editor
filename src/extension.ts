@@ -1629,7 +1629,26 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	const viewGistHistoryCommand = vscode.commands.registerCommand('gist-editor.viewGistHistory', async (gistItem: GistItem) => {
+			const viewGistHistoryCommand = vscode.commands.registerCommand('gist-editor.viewGistHistory', async (gistItem: GistItem) => {
+   const openInGitHubCommand = vscode.commands.registerCommand('gist-editor.openInGitHub', async (gistItem: GistItem) => {
+	   if (!gistItem) {
+		   vscode.window.showErrorMessage('No gist or file selected');
+		   return;
+	   }
+	   let url = '';
+	   if (gistItem.file) {
+		   // File: use raw_url if available, else fallback to gist HTML URL
+		   url = gistItem.file.raw_url || gistItem.gist.html_url;
+	   } else {
+		   // Gist: open gist page
+		   url = gistItem.gist.html_url;
+	   }
+	   if (!url) {
+		   vscode.window.showErrorMessage('No GitHub URL found for this item');
+		   return;
+	   }
+	   vscode.env.openExternal(vscode.Uri.parse(url));
+   });
 		if (!gistItem || gistItem.file) {
 			vscode.window.showErrorMessage('Please select a gist (not a file)');
 			return;
@@ -1719,26 +1738,47 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	// Add all commands to subscriptions
-	context.subscriptions.push(
-		helloWorldCommand,
-		refreshCommand,
-		createGistCommand,
-		createGistFromFileCommand,
-		createGistFromSelectionCommand,
-		openGistCommand,
-		openGistFileCommand,
-		setupTokenCommand,
-		testApiCommand,
-		checkScopesCommand,
-		saveGistCommand,
-		deleteGistCommand,
-		renameGistCommand,
-		addFileToGistCommand,
-		deleteFileFromGistCommand,
-		renameFileInGistCommand,
-		viewGistHistoryCommand
-	);
+	   const openInGitHubCommand = vscode.commands.registerCommand('gist-editor.openInGitHub', async (gistItem: GistItem) => {
+		   if (!gistItem) {
+			   vscode.window.showErrorMessage('No gist or file selected');
+			   return;
+		   }
+		   let url = '';
+		   if (gistItem.file) {
+			   // File: use raw_url if available, else fallback to gist HTML URL
+			   url = gistItem.file.raw_url || gistItem.gist.html_url;
+		   } else {
+			   // Gist: open gist page
+			   url = gistItem.gist.html_url;
+		   }
+		   if (!url) {
+			   vscode.window.showErrorMessage('No GitHub URL found for this item');
+			   return;
+		   }
+		   vscode.env.openExternal(vscode.Uri.parse(url));
+	   });
+
+	   // Add all commands to subscriptions
+		  context.subscriptions.push(
+			  helloWorldCommand,
+			  refreshCommand,
+			  createGistCommand,
+			  createGistFromFileCommand,
+			  createGistFromSelectionCommand,
+			  openGistCommand,
+			  openGistFileCommand,
+			  setupTokenCommand,
+			  testApiCommand,
+			  checkScopesCommand,
+			  saveGistCommand,
+			  deleteGistCommand,
+			  renameGistCommand,
+			  addFileToGistCommand,
+			  deleteFileFromGistCommand,
+			  renameFileInGistCommand,
+			  viewGistHistoryCommand,
+			  openInGitHubCommand
+		  );
 }
 
 // This method is called when your extension is deactivated

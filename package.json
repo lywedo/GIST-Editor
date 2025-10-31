@@ -114,6 +114,11 @@
         "command": "gist-editor.viewGistHistory",
         "title": "View Gist History",
         "icon": "$(history)"
+      },
+      {
+        "command": "gist-editor.openInGitHub",
+        "title": "Open in GitHub",
+        "icon": "$(link-external)"
       }
     ],
     "menus": {
@@ -178,6 +183,11 @@
           "group": "1_modification@3"
         },
         {
+          "command": "gist-editor.openInGitHub",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "1_modification@4"
+        },
+        {
           "command": "gist-editor.deleteGist",
           "when": "view == gist-editor.gistList && viewItem == gist",
           "group": "2_danger@1"
@@ -186,6 +196,11 @@
           "command": "gist-editor.renameFileInGist",
           "when": "view == gist-editor.gistList && viewItem == gistFile",
           "group": "1_modification@1"
+        },
+        {
+          "command": "gist-editor.openInGitHub",
+          "when": "view == gist-editor.gistList && viewItem == gistFile",
+          "group": "1_modification@2"
         },
         {
           "command": "gist-editor.deleteFileFromGist",
