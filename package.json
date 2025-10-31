@@ -68,6 +68,11 @@
         "icon": "$(debug)"
       },
       {
+        "command": "gist-editor.checkScopes",
+        "title": "Check GitHub Token Permissions",
+        "icon": "$(shield)"
+      },
+      {
         "command": "gist-editor.saveGist",
         "title": "Save Gist",
         "icon": "$(save)"

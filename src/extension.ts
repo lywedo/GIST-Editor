@@ -13,8 +13,14 @@ class GistContentProvider implements vscode.TextDocumentContentProvider {
 	constructor(private githubService: GitHubService) {}
 
 	async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-		const [gistId, filename] = uri.path.substring(1).split('/');
-		console.log(`Content provider: Loading ${filename} from gist ${gistId}`);
+		// Parse gistId and filename from URI path
+		// Path format: /{gistId}/{filename}
+		const pathParts = uri.path.substring(1).split('/');
+		const gistId = pathParts[0];
+		const filename = decodeURIComponent(pathParts.slice(1).join('/')); // Handle filenames with slashes
+		
+		console.log(`Content provider: Loading "${filename}" from gist ${gistId}`);
+		console.log(`Full URI: ${uri.toString()}`);
 		
 		try {
 			// Try to get from cache first
@@ -22,6 +28,8 @@ class GistContentProvider implements vscode.TextDocumentContentProvider {
 			if (!gist) {
 				console.log(`Fetching gist ${gistId} from API...`);
 				gist = await this.githubService.getGist(gistId);
+				console.log(`Gist fetched: public=${gist.public}, files=${Object.keys(gist.files).length}`);
+				console.log(`Available files in gist: ${Object.keys(gist.files).join(', ')}`);
 				this.gistCache.set(gistId, gist);
 			} else {
 				console.log(`Using cached gist ${gistId}`);
@@ -29,15 +37,23 @@ class GistContentProvider implements vscode.TextDocumentContentProvider {
 
 			const file = gist.files[filename];
 			if (!file) {
-				console.error(`File ${filename} not found in gist. Available files:`, Object.keys(gist.files));
-				throw new Error(`File ${filename} not found in gist`);
+				const availableFiles = Object.keys(gist.files).join(', ');
+				console.error(`File "${filename}" not found in gist. Available files: ${availableFiles}`);
+				throw new Error(`File "${filename}" not found in gist. Available files: ${availableFiles}`);
 			}
 
 			console.log(`Successfully loaded content for ${filename} (${file.content?.length || 0} characters)`);
 			return file.content || '';
-		} catch (error) {
+		} catch (error: any) {
 			console.error('Error loading gist content:', error);
-			return `Error loading gist content: ${error}`;
+			const errorMsg = error.message || String(error);
+			console.error('Error details:', {
+				gistId,
+				filename,
+				errorMessage: errorMsg,
+				errorType: error.constructor?.name
+			});
+			return `Error loading gist content: ${errorMsg}\n\nGist ID: ${gistId}\nFile: ${filename}\n\nCheck the console (Help > Toggle Developer Tools) for more details.`;
 		}
 	}
 
@@ -116,13 +132,9 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 				}
 
 				console.log(`Found ${gists.length} ${this.gistType} gists`);
-				// Show gists as expandable if they have multiple files, otherwise collapsed
+				// Show all gists as collapsed (expandable) so users can see and open files
 				return gists.map(gist => {
-					const fileCount = Object.keys(gist.files).length;
-					const collapsibleState = fileCount > 1 ? 
-						vscode.TreeItemCollapsibleState.Collapsed : 
-						vscode.TreeItemCollapsibleState.None;
-					return new GistItem(gist, undefined, collapsibleState);
+					return new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed);
 				});
 			} catch (error) {
 				console.error(`Error loading ${this.gistType} gists:`, error);
@@ -402,10 +414,16 @@ export function activate(context: vscode.ExtensionContext) {
 	async function openGistFile(gist: Gist, file: any) {
 		try {
 			// Create a custom URI scheme for gist files
-			const uri = vscode.Uri.parse(`gist:/${gist.id}/${file.filename}`);
+			// Encode the filename to handle special characters
+			const encodedFilename = encodeURIComponent(file.filename);
+			const uri = vscode.Uri.parse(`gist:/${gist.id}/${encodedFilename}`);
 
 			// Open the document
-			console.log(`Opening gist file: ${file.filename} (${file.language || 'unknown language'})`);
+			console.log(`Opening gist file: "${file.filename}" (${file.language || 'unknown language'})`);
+			console.log(`Gist details: ID=${gist.id}, Public=${gist.public}, Owner=${gist.owner?.login}`);
+			console.log(`Encoded filename: ${encodedFilename}`);
+			console.log(`Opening URI: ${uri.toString()}`);
+			
 			const document = await vscode.workspace.openTextDocument(uri);
 			const editor = await vscode.window.showTextDocument(document);
 			console.log(`Successfully opened document for ${file.filename}`);
@@ -438,9 +456,22 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			vscode.window.showInformationMessage(`Opened ${file.filename} from gist "${gist.description || 'Untitled'}"`);
-		} catch (error) {
+		} catch (error: any) {
 			console.error('Error opening gist file:', error);
-			vscode.window.showErrorMessage(`Failed to open file: ${error}`);
+			
+			// Provide more specific error messages
+			let errorMessage = `Failed to open file: `;
+			if (error.message?.includes('Access denied') || error.message?.includes('403')) {
+				errorMessage += `Access denied. This private gist might not be accessible with your current token.`;
+			} else if (error.message?.includes('not found') || error.message?.includes('404')) {
+				errorMessage += `Gist not found or has been deleted.`;
+			} else if (error.message?.includes('File') && error.message?.includes('not found')) {
+				errorMessage += `File "${file.filename}" not found in gist.`;
+			} else {
+				errorMessage += error.message || 'Unknown error';
+			}
+			
+			vscode.window.showErrorMessage(errorMessage);
 		}
 	}
 
@@ -1186,12 +1217,131 @@ export function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 			
+			// Test fetching user and check scopes
+			const username = await githubService.getCurrentUsername();
+			console.log('Current user:', username);
+			
 			const gists = await githubService.getMyGists();
-			vscode.window.showInformationMessage(`Found ${gists.length} gists!`);
-			console.log('Gists:', gists);
+			
+			// Count public vs private
+			const publicCount = gists.filter(g => g.public).length;
+			const privateCount = gists.filter(g => !g.public).length;
+			
+			vscode.window.showInformationMessage(
+				`Found ${gists.length} gists!\nPublic: ${publicCount}, Private: ${privateCount}`,
+				'Show Details'
+			).then(selection => {
+				if (selection === 'Show Details') {
+					const details = gists.map(g => `${g.public ? '🌐' : '🔒'} ${g.description || 'Untitled'}`).join('\n');
+					vscode.window.showInformationMessage(details);
+				}
+			});
+			console.log('Gists:', gists.map(g => ({ id: g.id, public: g.public, desc: g.description })));
 		} catch (error) {
 			console.error('API test error:', error);
 			vscode.window.showErrorMessage(`API test failed: ${error}`);
+		}
+	});
+
+	// Diagnostic command to check token scopes
+	const checkScopesCommand = vscode.commands.registerCommand('gist-editor.checkScopes', async () => {
+		try {
+			if (!githubService.isAuthenticated()) {
+				vscode.window.showWarningMessage('No GitHub token configured. Please set up authentication first.');
+				return;
+			}
+
+			await vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: 'Checking GitHub token permissions...',
+				cancellable: false
+			}, async () => {
+				try {
+					// Check token scopes
+					const scopes = await githubService.checkTokenScopes();
+					const hasGistScope = scopes.includes('gist');
+					
+					// Fetch username and gists
+					const username = await githubService.getCurrentUsername();
+					const gists = await githubService.getMyGists();
+					
+					const publicCount = gists.filter(g => g.public).length;
+					const privateCount = gists.filter(g => !g.public).length;
+					
+					let message = `✓ Authenticated as: ${username}\n`;
+					message += `✓ Token scopes: ${scopes.join(', ')}\n\n`;
+					message += `Total gists: ${gists.length}\n`;
+					message += `📂 Public gists: ${publicCount}\n`;
+					message += `🔒 Private gists: ${privateCount}\n\n`;
+					
+					if (!hasGistScope) {
+						message += `❌ PROBLEM FOUND: Your token is missing the "gist" scope!\n\n`;
+						message += `This is why you cannot access private gists.\n\n`;
+						message += `To fix this:\n`;
+						message += `1. Go to github.com/settings/tokens\n`;
+						message += `2. Click "Generate new token (classic)"\n`;
+						message += `3. Check the "gist" checkbox ✓\n`;
+						message += `4. Generate and copy the token\n`;
+						message += `5. Click the gear (⚙️) button in "My Gists" view\n`;
+						message += `6. Select "Change GitHub Token" and paste your new token`;
+						
+						vscode.window.showErrorMessage(message, 'Open GitHub Settings', 'Setup Token').then(selection => {
+							if (selection === 'Open GitHub Settings') {
+								vscode.env.openExternal(vscode.Uri.parse('https://github.com/settings/tokens'));
+							} else if (selection === 'Setup Token') {
+								vscode.commands.executeCommand('gist-editor.setupToken');
+							}
+						});
+					} else if (privateCount === 0 && publicCount > 0) {
+						message += `✓ Your token has the "gist" scope.\n`;
+						message += `ℹ️ You either have no private gists, or they're not showing up.\n\n`;
+						message += `Try:\n`;
+						message += `1. Check on github.com/gists if you have private gists\n`;
+						message += `2. Click the refresh button in the Gist Editor sidebar`;
+						
+						vscode.window.showInformationMessage(message, 'Refresh Gists').then(selection => {
+							if (selection === 'Refresh Gists') {
+								vscode.commands.executeCommand('gist-editor.refresh');
+							}
+						});
+					} else {
+						message += `✓ Everything looks good! Your token has proper access.`;
+						vscode.window.showInformationMessage(message, 'OK');
+					}
+				} catch (error: any) {
+					let errorMsg = '❌ Token Permission Check Failed\n\n';
+					
+					if (error.response?.status === 403) {
+						errorMsg += 'Your token does not have the required permissions.\n\n';
+						errorMsg += '🔧 FIX: Create a new GitHub Personal Access Token\n\n';
+						errorMsg += 'Steps:\n';
+						errorMsg += '1. Visit: github.com/settings/tokens\n';
+						errorMsg += '2. "Generate new token (classic)"\n';
+						errorMsg += '3. Name: "VS Code Gist Editor"\n';
+						errorMsg += '4. ✓ Check the "gist" scope\n';
+						errorMsg += '5. Click "Generate token"\n';
+						errorMsg += '6. Copy the token (you only see it once!)\n';
+						errorMsg += '7. In VS Code: Click ⚙️ in Gist Editor → Update token';
+					} else if (error.response?.status === 401) {
+						errorMsg += 'Your token is invalid or has been revoked.\n\n';
+						errorMsg += 'Please create a new token with the "gist" scope.';
+					} else {
+						errorMsg += `Error: ${error.message}\n\n`;
+						errorMsg += 'This might be a network issue or GitHub API problem.';
+					}
+					
+					vscode.window.showErrorMessage(errorMsg, 'Open Token Settings', 'Setup Token').then(selection => {
+						if (selection === 'Open Token Settings') {
+							vscode.env.openExternal(vscode.Uri.parse('https://github.com/settings/tokens'));
+						} else if (selection === 'Setup Token') {
+							vscode.commands.executeCommand('gist-editor.setupToken');
+						}
+					});
+				}
+			});
+		} catch (error) {
+			console.error('Scope check error:', error);
+			vscode.window.showErrorMessage(`Failed to check permissions: ${error}`);
 		}
 	});
 
@@ -1209,7 +1359,9 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		const [gistId, filename] = document.uri.path.substring(1).split('/');
+		const pathParts = document.uri.path.substring(1).split('/');
+		const gistId = pathParts[0];
+		const filename = decodeURIComponent(pathParts.slice(1).join('/'));
 		const content = document.getText();
 
 		try {
@@ -1232,7 +1384,9 @@ export function activate(context: vscode.ExtensionContext) {
 	const saveListener = vscode.workspace.onDidSaveTextDocument(async (document) => {
 		if (document.uri.scheme === 'gist') {
 			// Auto-save gist when user presses Ctrl+S
-			const [gistId, filename] = document.uri.path.substring(1).split('/');
+			const pathParts = document.uri.path.substring(1).split('/');
+			const gistId = pathParts[0];
+			const filename = decodeURIComponent(pathParts.slice(1).join('/'));
 			const content = document.getText();
 
 			try {
@@ -1263,6 +1417,7 @@ export function activate(context: vscode.ExtensionContext) {
 		openGistFileCommand,
 		setupTokenCommand,
 		testApiCommand,
+		checkScopesCommand,
 		saveGistCommand,
 		saveListener
 	);

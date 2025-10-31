@@ -50,17 +50,49 @@ export class GitHubService {
             this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
             console.log('GitHub token loaded from legacy config');
         } else {
-            console.log('No legacy token found, will use OAuth via vscode.authentication');
+            console.log('No legacy token found, will restore OAuth session on demand');
+        }
+    }
+
+    private async ensureTokenLoaded(): Promise<void> {
+        // If we already have a token, nothing to do
+        if (this.token) {
+            return;
+        }
+
+        // Try to restore from existing OAuth session (doesn't prompt user)
+        try {
+            console.log('Attempting to restore GitHub OAuth session...');
+            const session = await vscode.authentication.getSession('github', ['gist'], { createIfNone: false });
+            if (session) {
+                this.token = session.accessToken;
+                this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+                console.log('Successfully restored GitHub OAuth session from VS Code');
+                return;
+            }
+        } catch (error) {
+            console.log('No existing GitHub OAuth session found');
         }
     }
 
     public async getOAuthToken(): Promise<string> {
         try {
+            // Request gist scope for full access to private and public gists
             const session = await vscode.authentication.getSession('github', ['gist'], { createIfNone: true });
             if (session) {
                 this.token = session.accessToken;
                 this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
                 console.log('GitHub OAuth token obtained successfully');
+                console.log('Token scopes:', session.scopes);
+
+                // Verify the token works by fetching user info
+                try {
+                    const userResponse = await this.api.get('/user');
+                    console.log('Authenticated as:', userResponse.data.login);
+                } catch (verifyError) {
+                    console.error('Token verification failed:', verifyError);
+                }
+
                 return this.token;
             }
         } catch (error) {
@@ -103,10 +135,42 @@ export class GitHubService {
         return `Configured (${masked})`;
     }
 
+    public async checkTokenScopes(): Promise<string[]> {
+        await this.ensureTokenLoaded();
+        
+        if (!this.isAuthenticated()) {
+            throw new Error('Not authenticated');
+        }
+
+        try {
+            const response = await this.api.get('/user');
+            const scopesHeader = response.headers['x-oauth-scopes'] || '';
+            const scopes = scopesHeader.split(',').map((s: string) => s.trim()).filter(Boolean);
+            
+            console.log('Token scopes:', scopes);
+            
+            if (!scopes.includes('gist')) {
+                console.error('❌ CRITICAL: Token is missing "gist" scope!');
+                console.error('Available scopes:', scopes);
+                console.error('You will NOT be able to access private gists or create gists without this scope.');
+            } else {
+                console.log('✓ Token has "gist" scope - private gists should be accessible');
+            }
+            
+            return scopes;
+        } catch (error) {
+            console.error('Failed to check token scopes:', error);
+            throw error;
+        }
+    }
+
     public async getCurrentUsername(): Promise<string> {
         if (this.currentUsername) {
             return this.currentUsername;
         }
+
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
 
         if (!this.isAuthenticated()) {
             throw new Error('Not authenticated');
@@ -124,6 +188,9 @@ export class GitHubService {
     }
 
     public async getMyGists(): Promise<Gist[]> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
         if (!this.isAuthenticated()) {
             throw new Error('GitHub token not configured');
         }
@@ -133,6 +200,15 @@ export class GitHubService {
             console.log('Verifying GitHub authentication...');
             const userResponse = await this.api.get('/user');
             console.log('Authenticated user:', userResponse.data.login);
+            console.log('User scopes available:', userResponse.headers['x-oauth-scopes']);
+
+            // Check if gist scope is present
+            const scopes = userResponse.headers['x-oauth-scopes'] || '';
+            console.log('Token scopes:', scopes);
+            if (!scopes.includes('gist')) {
+                console.warn('⚠️ WARNING: Token does not have "gist" scope! Private gists may not be accessible.');
+                console.warn('Token scopes found:', scopes);
+            }
 
             console.log('Making API request to /gists...');
             // Try with pagination parameters to get all gists
@@ -142,27 +218,44 @@ export class GitHubService {
                 }
             });
             console.log('API Response status:', response.status);
-            console.log('API Response headers:', response.headers);
             console.log('API Response data length:', response.data?.length);
-            console.log('First gist (if any):', response.data?.[0]);
-            
+            console.log('API Response headers (scopes):', response.headers['x-oauth-scopes']);
+
+            // Log gist visibility info
+            if (response.data && Array.isArray(response.data)) {
+                console.log('Gist visibility summary:');
+                const publicCount = response.data.filter((g: Gist) => g.public).length;
+                const privateCount = response.data.filter((g: Gist) => !g.public).length;
+                console.log(`  - Public gists: ${publicCount}`);
+                console.log(`  - Private gists: ${privateCount}`);
+                console.log('First gist (if any):', {
+                    id: response.data[0]?.id,
+                    public: response.data[0]?.public,
+                    description: response.data[0]?.description
+                });
+            }
+
             if (!Array.isArray(response.data)) {
                 console.error('Expected array but got:', typeof response.data);
                 return [];
             }
-            
+
             return response.data;
         } catch (error: any) {
             console.error('Error fetching gists:', error);
             if (error.response) {
                 console.error('Error response status:', error.response.status);
                 console.error('Error response data:', error.response.data);
+                console.error('Error response headers (scopes):', error.response.headers['x-oauth-scopes']);
             }
             throw new Error(`Failed to fetch gists from GitHub: ${error.message}`);
         }
     }
 
     public async getStarredGists(): Promise<Gist[]> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
         if (!this.isAuthenticated()) {
             throw new Error('GitHub token not configured');
         }
@@ -177,20 +270,44 @@ export class GitHubService {
     }
 
     public async getGist(gistId: string): Promise<Gist> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
         if (!this.isAuthenticated()) {
             throw new Error('GitHub token not configured');
         }
 
         try {
+            console.log(`Fetching gist ${gistId}...`);
             const response = await this.api.get(`/gists/${gistId}`);
+            console.log(`Successfully fetched gist ${gistId}:`, {
+                id: response.data.id,
+                public: response.data.public,
+                fileCount: Object.keys(response.data.files).length,
+                description: response.data.description,
+                owner: response.data.owner?.login
+            });
             return response.data;
-        } catch (error) {
-            console.error('Error fetching gist:', error);
-            throw new Error(`Failed to fetch gist ${gistId}`);
+        } catch (error: any) {
+            console.error(`Error fetching gist ${gistId}:`, error);
+            if (error.response) {
+                console.error('Error response status:', error.response.status);
+                console.error('Error response data:', error.response.data);
+                
+                if (error.response.status === 403) {
+                    throw new Error(`Access denied to gist ${gistId}. This might be a private gist that requires proper authentication.`);
+                } else if (error.response.status === 404) {
+                    throw new Error(`Gist ${gistId} not found. It may have been deleted or you don't have access to it.`);
+                }
+            }
+            throw new Error(`Failed to fetch gist ${gistId}: ${error.message}`);
         }
     }
 
     public async createGist(description: string, files: { [filename: string]: { content: string } }, isPublic: boolean = false): Promise<Gist> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
         if (!this.isAuthenticated()) {
             throw new Error('GitHub token not configured');
         }
@@ -209,6 +326,9 @@ export class GitHubService {
     }
 
     public async updateGist(gistId: string, description?: string, files?: { [filename: string]: { content: string } }): Promise<Gist> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
         if (!this.isAuthenticated()) {
             throw new Error('GitHub token not configured');
         }
@@ -231,6 +351,9 @@ export class GitHubService {
     }
 
     public async deleteGist(gistId: string): Promise<void> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
         if (!this.isAuthenticated()) {
             throw new Error('GitHub token not configured');
         }
