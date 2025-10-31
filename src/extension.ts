@@ -1629,6 +1629,96 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	const viewGistHistoryCommand = vscode.commands.registerCommand('gist-editor.viewGistHistory', async (gistItem: GistItem) => {
+		if (!gistItem || gistItem.file) {
+			vscode.window.showErrorMessage('Please select a gist (not a file)');
+			return;
+		}
+
+		const gist = gistItem.gist;
+
+		try {
+			const revisions = await githubService.getGistRevisions(gist.id);
+			
+			if (revisions.length === 0) {
+				vscode.window.showInformationMessage('No revision history found for this gist');
+				return;
+			}
+
+			// Create QuickPick items for each revision
+			interface RevisionQuickPickItem extends vscode.QuickPickItem {
+				revision: any;
+			}
+
+			const items: RevisionQuickPickItem[] = revisions.map((rev, index) => {
+				const date = new Date(rev.committed_at);
+				const isLatest = index === 0;
+				return {
+					label: `$(history) ${date.toLocaleString()}${isLatest ? ' $(star) Latest' : ''}`,
+					description: `+${rev.change_status.additions} -${rev.change_status.deletions} • ${rev.user.login}`,
+					detail: `Version: ${rev.version.substring(0, 7)}`,
+					revision: rev
+				};
+			});
+
+			const selected = await vscode.window.showQuickPick(items, {
+				placeHolder: `Select a revision to view (${revisions.length} total)`,
+				matchOnDescription: true,
+				matchOnDetail: true
+			});
+
+			if (!selected) {
+				return; // User cancelled
+			}
+
+			// Fetch the gist at this revision
+			const historicalGist = await githubService.getGistAtRevision(gist.id, selected.revision.version);
+			
+			// Show files from this revision
+			const files = Object.values(historicalGist.files);
+			if (files.length === 0) {
+				vscode.window.showInformationMessage('No files in this revision');
+				return;
+			}
+
+			interface FileQuickPickItem extends vscode.QuickPickItem {
+				file: any;
+			}
+
+			const fileItems: FileQuickPickItem[] = files.map(file => ({
+				label: `$(file) ${file.filename}`,
+				description: `${file.language} • ${file.size} bytes`,
+				file: file
+			}));
+
+			const selectedFile = await vscode.window.showQuickPick(fileItems, {
+				placeHolder: 'Select a file to view from this revision'
+			});
+
+			if (!selectedFile) {
+				return;
+			}
+
+			// Open the historical file in a new untitled document (read-only)
+			const doc = await vscode.workspace.openTextDocument({
+				content: selectedFile.file.content || '',
+				language: getLanguageFromExtension(selectedFile.file.filename)
+			});
+
+			await vscode.window.showTextDocument(doc, {
+				preview: true
+			});
+
+			vscode.window.showInformationMessage(
+				`Viewing "${selectedFile.file.filename}" from ${new Date(selected.revision.committed_at).toLocaleString()} (read-only)`
+			);
+
+		} catch (error) {
+			console.error('Error viewing gist history:', error);
+			vscode.window.showErrorMessage(`Failed to load history: ${error}`);
+		}
+	});
+
 	// Add all commands to subscriptions
 	context.subscriptions.push(
 		helloWorldCommand,
@@ -1646,7 +1736,8 @@ export function activate(context: vscode.ExtensionContext) {
 		renameGistCommand,
 		addFileToGistCommand,
 		deleteFileFromGistCommand,
-		renameFileInGistCommand
+		renameFileInGistCommand,
+		viewGistHistoryCommand
 	);
 }
 

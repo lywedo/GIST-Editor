@@ -24,6 +24,21 @@ export interface Gist {
     };
 }
 
+export interface GistRevision {
+    version: string;
+    committed_at: string;
+    change_status: {
+        total: number;
+        additions: number;
+        deletions: number;
+    };
+    user: {
+        login: string;
+        avatar_url: string;
+    };
+    url: string;
+}
+
 export class GitHubService {
     private api: AxiosInstance;
     private token: string | undefined;
@@ -363,6 +378,43 @@ export class GitHubService {
         } catch (error) {
             console.error('Error deleting gist:', error);
             throw new Error(`Failed to delete gist ${gistId}`);
+        }
+    }
+
+    public async getGistRevisions(gistId: string): Promise<GistRevision[]> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`Fetching revisions for gist ${gistId}...`);
+            const response = await this.api.get(`/gists/${gistId}/commits`);
+            console.log(`Found ${response.data.length} revisions`);
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching gist revisions:', error);
+            throw new Error(`Failed to fetch revisions for gist ${gistId}`);
+        }
+    }
+
+    public async getGistAtRevision(gistId: string, sha: string): Promise<Gist> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`Fetching gist ${gistId} at revision ${sha}...`);
+            const response = await this.api.get(`/gists/${gistId}/${sha}`);
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching gist at revision:', error);
+            throw new Error(`Failed to fetch gist ${gistId} at revision ${sha}`);
         }
     }
 }

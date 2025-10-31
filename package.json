@@ -109,6 +109,11 @@
         "command": "gist-editor.renameFileInGist",
         "title": "Rename File in Gist",
         "icon": "$(edit)"
+      },
+      {
+        "command": "gist-editor.viewGistHistory",
+        "title": "View Gist History",
+        "icon": "$(history)"
       }
     ],
     "menus": {
@@ -166,6 +171,11 @@
           "command": "gist-editor.addFileToGist",
           "when": "view == gist-editor.gistList && viewItem == gist",
           "group": "1_modification@2"
+        },
+        {
+          "command": "gist-editor.viewGistHistory",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "1_modification@3"
         },
         {
           "command": "gist-editor.deleteGist",
