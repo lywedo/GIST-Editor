@@ -113,6 +113,8 @@ class GistItem extends vscode.TreeItem {
 	// For group items (Public/Private categories)
 	public isGroup: boolean = false;
 	public groupType?: 'public' | 'private';
+	// Track if gist is starred
+	public isStarred: boolean = false;
 
 	constructor(
 		public readonly gist: Gist,
@@ -151,7 +153,8 @@ class GistItem extends vscode.TreeItem {
 			// Show file count and visibility
 			const fileCount = Object.keys(gist.files).length;
 			const visibility = gist.public ? 'Public' : 'Private';
-			this.description = `${fileCount} file${fileCount !== 1 ? 's' : ''} • ${visibility}`;
+			const starIndicator = this.isStarred ? '⭐' : '';
+			this.description = `${fileCount} file${fileCount !== 1 ? 's' : ''} • ${visibility} ${starIndicator}`.trim();
 		}
 	}
 }
@@ -1536,6 +1539,41 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// Toggle star/unstar gist command
+	const toggleStarGistCommand = vscode.commands.registerCommand('gist-editor.toggleStarGist', async (gistItem: GistItem) => {
+		if (!gistItem || !gistItem.gist) {
+			vscode.window.showErrorMessage('No gist selected');
+			return;
+		}
+
+		const gist = gistItem.gist;
+
+		try {
+			console.log(`[ToggleStar] Checking if gist ${gist.id} is starred...`);
+			const isStarred = await githubService.checkIfStarred(gist.id);
+			console.log(`[ToggleStar] Gist is currently ${isStarred ? 'starred' : 'not starred'}`);
+
+			if (isStarred) {
+				// Unstar
+				console.log(`[ToggleStar] Unstarring gist ${gist.id}`);
+				await githubService.unstarGist(gist.id);
+				vscode.window.showInformationMessage(`✓ Removed star from "${gist.description}"`);
+			} else {
+				// Star
+				console.log(`[ToggleStar] Starring gist ${gist.id}`);
+				await githubService.starGist(gist.id);
+				vscode.window.showInformationMessage(`⭐ Starred "${gist.description}"`);
+			}
+
+			// Refresh to update the UI
+			myGistsProvider.refresh();
+			starredGistsProvider.refresh();
+		} catch (error) {
+			console.error('[ToggleStar] Error toggling star:', error);
+			vscode.window.showErrorMessage(`Failed to toggle star: ${error}`);
+		}
+	});
+
 	// Add file to gist command
 	const addFileToGistCommand = vscode.commands.registerCommand('gist-editor.addFileToGist', async (gistItem: GistItem) => {
 		if (!gistItem || !gistItem.gist) {
@@ -1826,6 +1864,7 @@ export function activate(context: vscode.ExtensionContext) {
 			  saveGistCommand,
 			  deleteGistCommand,
 			  renameGistCommand,
+			  toggleStarGistCommand,
 			  addFileToGistCommand,
 			  deleteFileFromGistCommand,
 			  renameFileInGistCommand,

@@ -417,4 +417,63 @@ export class GitHubService {
             throw new Error(`Failed to fetch gist ${gistId} at revision ${sha}`);
         }
     }
+
+    public async starGist(gistId: string): Promise<void> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`[starGist] Starring gist ${gistId}`);
+            await this.api.put(`/gists/${gistId}/star`);
+            console.log(`[starGist] Successfully starred gist ${gistId}`);
+        } catch (error) {
+            console.error('Error starring gist:', error);
+            throw new Error(`Failed to star gist ${gistId}`);
+        }
+    }
+
+    public async unstarGist(gistId: string): Promise<void> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`[unstarGist] Unstarring gist ${gistId}`);
+            await this.api.delete(`/gists/${gistId}/star`);
+            console.log(`[unstarGist] Successfully unstarred gist ${gistId}`);
+        } catch (error) {
+            console.error('Error unstarring gist:', error);
+            throw new Error(`Failed to unstar gist ${gistId}`);
+        }
+    }
+
+    public async checkIfStarred(gistId: string): Promise<boolean> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`[checkIfStarred] Checking if gist ${gistId} is starred`);
+            await this.api.get(`/gists/${gistId}/star`);
+            console.log(`[checkIfStarred] Gist ${gistId} is starred`);
+            return true;
+        } catch (error: any) {
+            if (error.response?.status === 404) {
+                console.log(`[checkIfStarred] Gist ${gistId} is not starred`);
+                return false;
+            }
+            console.error('Error checking if gist is starred:', error);
+            throw new Error(`Failed to check if gist is starred: ${error.message}`);
+        }
+    }
 }
