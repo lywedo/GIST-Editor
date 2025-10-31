@@ -3,24 +3,43 @@
 import * as vscode from 'vscode';
 import { GitHubService, Gist } from './githubService';
 
-// Content provider for gist files
-class GistContentProvider implements vscode.TextDocumentContentProvider {
-	private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
-	public readonly onDidChange = this._onDidChange.event;
+// File system provider for gist files (allows editing)
+class GistFileSystemProvider implements vscode.FileSystemProvider {
+	private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
+	readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> = this._emitter.event;
 
 	private gistCache = new Map<string, Gist>();
 
 	constructor(private githubService: GitHubService) {}
 
-	async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-		// Parse gistId and filename from URI path
-		// Path format: /{gistId}/{filename}
+	watch(uri: vscode.Uri): vscode.Disposable {
+		// Ignore, we don't support watching
+		return new vscode.Disposable(() => {});
+	}
+
+	stat(uri: vscode.Uri): vscode.FileStat {
+		return {
+			type: vscode.FileType.File,
+			ctime: Date.now(),
+			mtime: Date.now(),
+			size: 0
+		};
+	}
+
+	readDirectory(uri: vscode.Uri): [string, vscode.FileType][] {
+		return [];
+	}
+
+	createDirectory(uri: vscode.Uri): void {
+		throw vscode.FileSystemError.NoPermissions('Cannot create directories in gists');
+	}
+
+	async readFile(uri: vscode.Uri): Promise<Uint8Array> {
 		const pathParts = uri.path.substring(1).split('/');
 		const gistId = pathParts[0];
-		const filename = decodeURIComponent(pathParts.slice(1).join('/')); // Handle filenames with slashes
+		const filename = decodeURIComponent(pathParts.slice(1).join('/'));
 		
-		console.log(`Content provider: Loading "${filename}" from gist ${gistId}`);
-		console.log(`Full URI: ${uri.toString()}`);
+		console.log(`FileSystem: Reading "${filename}" from gist ${gistId}`);
 		
 		try {
 			// Try to get from cache first
@@ -29,38 +48,63 @@ class GistContentProvider implements vscode.TextDocumentContentProvider {
 				console.log(`Fetching gist ${gistId} from API...`);
 				gist = await this.githubService.getGist(gistId);
 				console.log(`Gist fetched: public=${gist.public}, files=${Object.keys(gist.files).length}`);
-				console.log(`Available files in gist: ${Object.keys(gist.files).join(', ')}`);
 				this.gistCache.set(gistId, gist);
-			} else {
-				console.log(`Using cached gist ${gistId}`);
 			}
 
 			const file = gist.files[filename];
 			if (!file) {
 				const availableFiles = Object.keys(gist.files).join(', ');
-				console.error(`File "${filename}" not found in gist. Available files: ${availableFiles}`);
-				throw new Error(`File "${filename}" not found in gist. Available files: ${availableFiles}`);
+				console.error(`File "${filename}" not found in gist. Available: ${availableFiles}`);
+				throw vscode.FileSystemError.FileNotFound(uri);
 			}
 
-			console.log(`Successfully loaded content for ${filename} (${file.content?.length || 0} characters)`);
-			return file.content || '';
+			console.log(`Successfully read content for ${filename} (${file.content?.length || 0} characters)`);
+			return Buffer.from(file.content || '', 'utf8');
 		} catch (error: any) {
-			console.error('Error loading gist content:', error);
-			const errorMsg = error.message || String(error);
-			console.error('Error details:', {
-				gistId,
-				filename,
-				errorMessage: errorMsg,
-				errorType: error.constructor?.name
-			});
-			return `Error loading gist content: ${errorMsg}\n\nGist ID: ${gistId}\nFile: ${filename}\n\nCheck the console (Help > Toggle Developer Tools) for more details.`;
+			console.error('Error reading gist file:', error);
+			throw vscode.FileSystemError.Unavailable(error.message);
 		}
+	}
+
+	async writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean, overwrite: boolean }): Promise<void> {
+		const pathParts = uri.path.substring(1).split('/');
+		const gistId = pathParts[0];
+		const filename = decodeURIComponent(pathParts.slice(1).join('/'));
+		const contentStr = Buffer.from(content).toString('utf8');
+		
+		console.log(`FileSystem: Writing "${filename}" to gist ${gistId} (${contentStr.length} chars)`);
+		
+		try {
+			await this.githubService.updateGist(gistId, undefined, {
+				[filename]: { content: contentStr }
+			});
+
+			// Invalidate cache
+			this.gistCache.delete(gistId);
+			
+			// Notify that file changed
+			this._emitter.fire([{
+				type: vscode.FileChangeType.Changed,
+				uri
+			}]);
+			
+			console.log(`Successfully saved ${filename} to gist`);
+		} catch (error: any) {
+			console.error('Error writing gist file:', error);
+			throw vscode.FileSystemError.Unavailable(error.message);
+		}
+	}
+
+	delete(uri: vscode.Uri): void {
+		throw vscode.FileSystemError.NoPermissions('Cannot delete gist files directly');
+	}
+
+	rename(oldUri: vscode.Uri, newUri: vscode.Uri): void {
+		throw vscode.FileSystemError.NoPermissions('Cannot rename gist files directly');
 	}
 
 	public invalidateCache(gistId: string) {
 		this.gistCache.delete(gistId);
-		// Trigger refresh for all gist URIs
-		this._onDidChange.fire(vscode.Uri.parse(`gist:/${gistId}`));
 	}
 }
 
@@ -195,10 +239,13 @@ export function activate(context: vscode.ExtensionContext) {
 	// Create GitHub service
 	const githubService = new GitHubService();
 
-	// Create gist content provider
-	const gistContentProvider = new GistContentProvider(githubService);
+	// Create gist file system provider
+	const gistFileSystemProvider = new GistFileSystemProvider(githubService);
 	context.subscriptions.push(
-		vscode.workspace.registerTextDocumentContentProvider('gist', gistContentProvider)
+		vscode.workspace.registerFileSystemProvider('gist', gistFileSystemProvider, {
+			isCaseSensitive: true,
+			isReadonly: false
+		})
 	);
 
 	// Create tree data providers
@@ -1359,52 +1406,21 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		const pathParts = document.uri.path.substring(1).split('/');
-		const gistId = pathParts[0];
-		const filename = decodeURIComponent(pathParts.slice(1).join('/'));
-		const content = document.getText();
-
+		// Just save the document - the FileSystemProvider will handle uploading to GitHub
 		try {
-			await githubService.updateGist(gistId, undefined, {
-				[filename]: { content }
-			});
-
-			// Clear cache and refresh
-			gistContentProvider.invalidateCache(gistId);
+			await document.save();
+			const pathParts = document.uri.path.substring(1).split('/');
+			const filename = decodeURIComponent(pathParts.slice(1).join('/'));
 			myGistsProvider.refresh();
-			
-			vscode.window.showInformationMessage(`Saved ${filename} to gist successfully!`);
+			vscode.window.showInformationMessage(`✓ Saved ${filename} to gist`);
 		} catch (error) {
 			console.error('Error saving gist:', error);
 			vscode.window.showErrorMessage(`Failed to save gist: ${error}`);
 		}
 	});
 
-	// Listen for document saves to auto-save gists
-	const saveListener = vscode.workspace.onDidSaveTextDocument(async (document) => {
-		if (document.uri.scheme === 'gist') {
-			// Auto-save gist when user presses Ctrl+S
-			const pathParts = document.uri.path.substring(1).split('/');
-			const gistId = pathParts[0];
-			const filename = decodeURIComponent(pathParts.slice(1).join('/'));
-			const content = document.getText();
-
-			try {
-				await githubService.updateGist(gistId, undefined, {
-					[filename]: { content }
-				});
-
-				// Clear cache and refresh
-				gistContentProvider.invalidateCache(gistId);
-				myGistsProvider.refresh();
-				
-				vscode.window.setStatusBarMessage(`✓ Saved ${filename} to gist`, 3000);
-			} catch (error) {
-				console.error('Error auto-saving gist:', error);
-				vscode.window.showErrorMessage(`Failed to save gist: ${error}`);
-			}
-		}
-	});
+	// Note: Auto-save is now handled automatically by the FileSystemProvider
+	// No need for a separate save listener
 
 	// Add all commands to subscriptions
 	context.subscriptions.push(
@@ -1418,8 +1434,7 @@ export function activate(context: vscode.ExtensionContext) {
 		setupTokenCommand,
 		testApiCommand,
 		checkScopesCommand,
-		saveGistCommand,
-		saveListener
+		saveGistCommand
 	);
 }
 
