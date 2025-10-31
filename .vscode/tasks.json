@@ -24,7 +24,12 @@
             "group": "build",
             "problemMatcher": [
                 {
-                    "base": "$esbuild",
+                    "owner": "esbuild",
+                    "fileLocation": ["absolute"],
+                    "pattern": {
+                        "regexp": "^✘ \\[ERROR] (.*)$",
+                        "message": 1
+                    },
                     "background": {
                         "activeOnStart": true,
                         "beginsPattern": "^\\[watch\\] build started$",

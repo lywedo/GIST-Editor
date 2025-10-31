@@ -14,20 +14,26 @@ class GistContentProvider implements vscode.TextDocumentContentProvider {
 
 	async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
 		const [gistId, filename] = uri.path.substring(1).split('/');
+		console.log(`Content provider: Loading ${filename} from gist ${gistId}`);
 		
 		try {
 			// Try to get from cache first
 			let gist = this.gistCache.get(gistId);
 			if (!gist) {
+				console.log(`Fetching gist ${gistId} from API...`);
 				gist = await this.githubService.getGist(gistId);
 				this.gistCache.set(gistId, gist);
+			} else {
+				console.log(`Using cached gist ${gistId}`);
 			}
 
 			const file = gist.files[filename];
 			if (!file) {
+				console.error(`File ${filename} not found in gist. Available files:`, Object.keys(gist.files));
 				throw new Error(`File ${filename} not found in gist`);
 			}
 
+			console.log(`Successfully loaded content for ${filename} (${file.content?.length || 0} characters)`);
 			return file.content || '';
 		} catch (error) {
 			console.error('Error loading gist content:', error);
@@ -394,12 +400,36 @@ export function activate(context: vscode.ExtensionContext) {
 			const uri = vscode.Uri.parse(`gist:/${gist.id}/${file.filename}`);
 
 			// Open the document
+			console.log(`Opening gist file: ${file.filename} (${file.language || 'unknown language'})`);
 			const document = await vscode.workspace.openTextDocument(uri);
 			const editor = await vscode.window.showTextDocument(document);
+			console.log(`Successfully opened document for ${file.filename}`);
 			
-			// Set the language mode based on file extension
-			if (file.language && file.language !== 'Text') {
-				await vscode.languages.setTextDocumentLanguage(document, getLanguageId(file.language));
+			// Set the language mode - try multiple approaches
+			try {
+				let languageId = null;
+				
+				// First try: Use GitHub's language detection
+				if (file.language && file.language !== 'Text') {
+					languageId = getLanguageId(file.language);
+				}
+				
+				// Second try: Use file extension
+				if (!languageId || languageId === 'plaintext') {
+					languageId = getLanguageFromExtension(file.filename);
+				}
+				
+				// Apply the language if we found one
+				if (languageId && languageId !== 'plaintext') {
+					console.log(`Attempting to set language to ${languageId} for ${file.filename}`);
+					await vscode.languages.setTextDocumentLanguage(document, languageId);
+					console.log(`Successfully set language to ${languageId} for ${file.filename}`);
+				} else {
+					console.log(`Using default language (plaintext) for ${file.filename}`);
+				}
+			} catch (langError) {
+				console.warn('Failed to set language mode:', langError);
+				// Continue anyway - file will still open
 			}
 
 			vscode.window.showInformationMessage(`Opened ${file.filename} from gist "${gist.description || 'Untitled'}"`);
@@ -434,9 +464,212 @@ export function activate(context: vscode.ExtensionContext) {
 			'Swift': 'swift',
 			'Kotlin': 'kotlin',
 			'Dart': 'dart',
-			'Text': 'plaintext'
+			'Text': 'plaintext',
+			'R': 'r',
+			'Scala': 'scala',
+			'Perl': 'perl',
+			'Lua': 'lua',
+			'Haskell': 'haskell',
+			'Clojure': 'clojure',
+			'F#': 'fsharp',
+			'Visual Basic': 'vb',
+			'SCSS': 'scss',
+			'Sass': 'sass',
+			'Less': 'less',
+			'Stylus': 'stylus',
+			'Vue': 'vue',
+			'React': 'jsx',
+			'JSX': 'jsx',
+			'TSX': 'tsx',
+			'Dockerfile': 'dockerfile',
+			'Makefile': 'makefile',
+			'Bash': 'shellscript',
+			'Zsh': 'shellscript',
+			'Fish': 'fish',
+			'Batch': 'bat',
+			'Assembly': 'asm',
+			'TOML': 'toml',
+			'INI': 'ini',
+			'Properties': 'properties',
+			'LaTeX': 'latex',
+			'Objective-C': 'objective-c',
+			'Objective-C++': 'objective-cpp'
 		};
 		return languageMap[githubLanguage] || 'plaintext';
+	}
+
+	function getLanguageFromExtension(filename: string): string {
+		const extension = filename.split('.').pop()?.toLowerCase() || '';
+		
+		const extensionMap: { [key: string]: string } = {
+			// JavaScript family
+			'js': 'javascript',
+			'jsx': 'jsx',
+			'ts': 'typescript',
+			'tsx': 'tsx',
+			'mjs': 'javascript',
+			'cjs': 'javascript',
+			
+			// Python
+			'py': 'python',
+			'pyw': 'python',
+			'pyx': 'python',
+			'pyi': 'python',
+			
+			// Web technologies
+			'html': 'html',
+			'htm': 'html',
+			'xhtml': 'html',
+			'css': 'css',
+			'scss': 'scss',
+			'sass': 'sass',
+			'less': 'less',
+			'styl': 'stylus',
+			
+			// Data formats
+			'json': 'json',
+			'jsonc': 'jsonc',
+			'json5': 'json5',
+			'xml': 'xml',
+			'yaml': 'yaml',
+			'yml': 'yaml',
+			'toml': 'toml',
+			'ini': 'ini',
+			'properties': 'properties',
+			'cfg': 'ini',
+			'conf': 'properties',
+			
+			// Documentation
+			'md': 'markdown',
+			'markdown': 'markdown',
+			'mdown': 'markdown',
+			'mkd': 'markdown',
+			'tex': 'latex',
+			'latex': 'latex',
+			'rst': 'restructuredtext',
+			'adoc': 'asciidoc',
+			'org': 'org',
+			
+			// Programming languages
+			'java': 'java',
+			'kt': 'kotlin',
+			'kts': 'kotlin',
+			'scala': 'scala',
+			'sc': 'scala',
+			'groovy': 'groovy',
+			'gradle': 'gradle',
+			
+			// C family
+			'c': 'c',
+			'h': 'c',
+			'cpp': 'cpp',
+			'cxx': 'cpp',
+			'cc': 'cpp',
+			'hpp': 'cpp',
+			'hxx': 'cpp',
+			'hh': 'cpp',
+			'cs': 'csharp',
+			'fs': 'fsharp',
+			'fsx': 'fsharp',
+			'fsi': 'fsharp',
+			
+			// Mobile
+			'swift': 'swift',
+			'dart': 'dart',
+			'm': 'objective-c',
+			'mm': 'objective-cpp',
+			
+			// Functional languages
+			'hs': 'haskell',
+			'lhs': 'literate-haskell',
+			'elm': 'elm',
+			'clj': 'clojure',
+			'cljs': 'clojure',
+			'cljc': 'clojure',
+			'ml': 'ocaml',
+			'mli': 'ocaml',
+			'f90': 'fortran-modern',
+			'f95': 'fortran-modern',
+			
+			// Scripting languages
+			'rb': 'ruby',
+			'rbx': 'ruby',
+			'rjs': 'ruby',
+			'gemspec': 'ruby',
+			'rake': 'ruby',
+			'php': 'php',
+			'php3': 'php',
+			'php4': 'php',
+			'php5': 'php',
+			'phtml': 'php',
+			'pl': 'perl',
+			'pm': 'perl',
+			'pod': 'perl',
+			't': 'perl',
+			'lua': 'lua',
+			'r': 'r',
+			'R': 'r',
+			'rmd': 'rmd',
+			
+			// Systems languages
+			'go': 'go',
+			'rs': 'rust',
+			'zig': 'zig',
+			'nim': 'nim',
+			'cr': 'crystal',
+			'd': 'd',
+			
+			// Shell scripts
+			'sh': 'shellscript',
+			'bash': 'shellscript',
+			'zsh': 'shellscript',
+			'fish': 'fish',
+			'ps1': 'powershell',
+			'psm1': 'powershell',
+			'psd1': 'powershell',
+			'bat': 'bat',
+			'cmd': 'bat',
+			
+			// SQL
+			'sql': 'sql',
+			'mysql': 'sql',
+			'pgsql': 'sql',
+			'plsql': 'plsql',
+			
+			// Assembly
+			'asm': 'asm',
+			's': 'asm',
+			'S': 'asm',
+			'nasm': 'nasm',
+			
+			// Docker & Infrastructure
+			'dockerfile': 'dockerfile',
+			'containerfile': 'dockerfile',
+			'makefile': 'makefile',
+			'mk': 'makefile',
+			'cmake': 'cmake',
+			'tf': 'terraform',
+			'hcl': 'hcl',
+			
+			// Frontend frameworks
+			'vue': 'vue',
+			'svelte': 'svelte',
+			'astro': 'astro',
+			
+			// Other common formats
+			'txt': 'plaintext',
+			'text': 'plaintext',
+			'log': 'log',
+			'csv': 'csv',
+			'tsv': 'tsv',
+			'svg': 'xml',
+			'graphql': 'graphql',
+			'gql': 'graphql',
+			'proto': 'protobuf',
+			'thrift': 'thrift'
+		};
+		
+		return extensionMap[extension] || 'plaintext';
 	}
 
 	// Helper functions for creating gists
@@ -451,7 +684,7 @@ export function activate(context: vscode.ExtensionContext) {
 		const content = document.getText();
 		
 		if (!content.trim()) {
-			vscode.window.showErrorMessage('Current file is empty');
+			vscode.window.showErrorMessage('Current file is empty. GitHub requires gist content.');
 			return {};
 		}
 
@@ -474,7 +707,7 @@ export function activate(context: vscode.ExtensionContext) {
 		const selectedText = activeEditor.document.getText(selection);
 		
 		if (!selectedText.trim()) {
-			vscode.window.showErrorMessage('No text is selected');
+			vscode.window.showErrorMessage('No text is selected or selection is empty. GitHub requires gist content.');
 			return {};
 		}
 
@@ -517,15 +750,59 @@ export function activate(context: vscode.ExtensionContext) {
 			return {};
 		}
 
+		// Provide smart default content based on file extension
+		const extension = fileName.split('.').pop()?.toLowerCase() || '';
+		let defaultContent = '// Add your content here';
+		
+		switch (extension) {
+			case 'js':
+			case 'ts':
+				defaultContent = 'console.log("Hello, World!");';
+				break;
+			case 'py':
+				defaultContent = 'print("Hello, World!")';
+				break;
+			case 'java':
+				defaultContent = 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}';
+				break;
+			case 'html':
+				defaultContent = '<!DOCTYPE html>\n<html>\n<head>\n    <title>My Gist</title>\n</head>\n<body>\n    <h1>Hello, World!</h1>\n</body>\n</html>';
+				break;
+			case 'css':
+				defaultContent = 'body {\n    font-family: Arial, sans-serif;\n    margin: 0;\n    padding: 20px;\n}';
+				break;
+			case 'md':
+				defaultContent = '# My Gist\n\nAdd your content here...';
+				break;
+			case 'json':
+				defaultContent = '{\n    "name": "example",\n    "version": "1.0.0"\n}';
+				break;
+			case 'sh':
+				defaultContent = '#!/bin/bash\necho "Hello, World!"';
+				break;
+			default:
+				defaultContent = 'Add your content here...';
+		}
+
 		const content = await vscode.window.showInputBox({
-			prompt: 'Enter initial content (optional)',
-			value: '',
-			placeHolder: 'Initial file content...',
-			ignoreFocusOut: true
+			prompt: 'Enter content for your gist (required)',
+			value: defaultContent,
+			placeHolder: 'Gist content is required by GitHub...',
+			ignoreFocusOut: true,
+			validateInput: (value) => {
+				if (!value.trim()) {
+					return 'Content cannot be empty - GitHub requires gist content';
+				}
+				return null;
+			}
 		});
 
+		if (!content) {
+			return {};
+		}
+
 		return {
-			[fileName]: { content: content || '' }
+			[fileName]: { content }
 		};
 	}
 
@@ -552,14 +829,47 @@ export function activate(context: vscode.ExtensionContext) {
 				break; // User cancelled or finished
 			}
 
+			// Provide smart default content based on file extension
+			const extension = fileName.split('.').pop()?.toLowerCase() || '';
+			let defaultContent = 'Add content here...';
+			
+			switch (extension) {
+				case 'js':
+				case 'ts':
+					defaultContent = 'console.log("Hello from ' + fileName + '");';
+					break;
+				case 'py':
+					defaultContent = 'print("Hello from ' + fileName + '")';
+					break;
+				case 'md':
+					defaultContent = '# ' + fileName.replace(/\.[^/.]+$/, '') + '\n\nAdd your content here...';
+					break;
+				case 'json':
+					defaultContent = '{\n    "file": "' + fileName + '",\n    "content": "example"\n}';
+					break;
+				default:
+					defaultContent = 'Add content for ' + fileName + ' here...';
+			}
+
 			const content = await vscode.window.showInputBox({
-				prompt: `Enter content for ${fileName}`,
-				value: '',
-				placeHolder: 'File content...',
-				ignoreFocusOut: true
+				prompt: `Enter content for ${fileName} (required)`,
+				value: defaultContent,
+				placeHolder: 'File content is required...',
+				ignoreFocusOut: true,
+				validateInput: (value) => {
+					if (!value.trim()) {
+						return 'Content cannot be empty - GitHub requires file content';
+					}
+					return null;
+				}
 			});
 
-			files[fileName] = { content: content || '' };
+			if (!content) {
+				// User cancelled, remove this iteration
+				continue;
+			}
+
+			files[fileName] = { content };
 
 			// Ask if user wants to add more files
 			const addMore = await vscode.window.showQuickPick([
@@ -636,6 +946,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Helper function to create gist from files
 	async function createGistFromFiles(files: { [filename: string]: { content: string } }, defaultDescription: string) {
+		// Validate that all files have content
+		const emptyFiles = Object.entries(files).filter(([_, file]) => !file.content.trim());
+		if (emptyFiles.length > 0) {
+			vscode.window.showErrorMessage(`Cannot create gist: ${emptyFiles.map(([name]) => name).join(', ')} ${emptyFiles.length === 1 ? 'is' : 'are'} empty. GitHub requires all files to have content.`);
+			return;
+		}
+
 		// Get gist description
 		const description = await vscode.window.showInputBox({
 			prompt: 'Enter a description for your gist',
