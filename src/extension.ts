@@ -1558,10 +1558,25 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		try {
-			// To delete a file, set its content to null in the update
-			await githubService.updateGist(gist.id, undefined, {
-				[file.filename]: { content: null as any }
-			});
+			// To delete a file, we need to update the gist with all files except the one to delete
+			// First, get the current gist to have all files
+			const currentGist = await githubService.getGist(gist.id);
+
+			// Create update with all files except the one to delete
+			const filesUpdate: any = {};
+			for (const [filename, fileObj] of Object.entries(currentGist.files)) {
+				if (filename !== file.filename) {
+					filesUpdate[filename] = { content: fileObj.content || '' };
+				}
+			}
+
+			// If gist has only one file, we can't delete it - GitHub doesn't allow empty gists
+			if (Object.keys(filesUpdate).length === 0) {
+				vscode.window.showErrorMessage('Cannot delete the last file in a gist. GitHub Gists must contain at least one file.');
+				return;
+			}
+
+			await githubService.updateGist(gist.id, undefined, filesUpdate);
 			
 			gistFileSystemProvider.invalidateCache(gist.id);
 			myGistsProvider.refresh();
@@ -1597,21 +1612,24 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		});
 
-		if (!newFilename || newFilename === oldFilename) {
+		if (!newFilename || newFilename.trim() === '' || newFilename === oldFilename) {
 			return; // User cancelled or didn't change the name
 		}
 
 		try {
-			// GitHub API: rename by creating new file with same content and deleting old one
-			await githubService.updateGist(gist.id, undefined, {
-				[newFilename]: { content: file.content || ' ' },
-				[oldFilename]: { content: null as any }
-			});
-			
+			// Use the old filename as the key, with "filename" property for the new name
+			const filesUpdate: any = {
+				[oldFilename]: {
+					filename: newFilename,  // New name goes in the filename property
+					content: file.content || ' '
+				}
+			};
+			await githubService.updateGist(gist.id, undefined, filesUpdate);
+
 			gistFileSystemProvider.invalidateCache(gist.id);
 			myGistsProvider.refresh();
 			vscode.window.showInformationMessage(`✓ Renamed "${oldFilename}" to "${newFilename}"`);
-			
+
 			// Close old document if open
 			const oldUri = vscode.Uri.parse(`gist:/${gist.id}/${encodeURIComponent(oldFilename)}`);
 			const openDoc = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === oldUri.toString());
@@ -1619,7 +1637,7 @@ export function activate(context: vscode.ExtensionContext) {
 				await vscode.window.showTextDocument(openDoc);
 				await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
 			}
-			
+
 			// Open renamed file
 			const newUri = vscode.Uri.parse(`gist:/${gist.id}/${encodeURIComponent(newFilename)}`);
 			await vscode.window.showTextDocument(newUri);
