@@ -1,13 +1,33 @@
 {
   "name": "gist-editor",
   "displayName": "Gist Editor",
-  "description": "A VS Code extension for managing GitHub Gists",
-  "version": "0.0.1",
+  "description": "Manage GitHub Gists directly from VS Code. Create, edit, view, and organize your gists without leaving the editor.",
+  "version": "1.0.0",
+  "publisher": "lywedo",
+  "icon": "icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lywedo/gist-editor"
+  },
+  "homepage": "https://github.com/lywedo/gist-editor",
+  "bugs": {
+    "url": "https://github.com/lywedo/gist-editor/issues"
+  },
+  "keywords": [
+    "github",
+    "gist",
+    "code-sharing",
+    "snippet",
+    "productivity",
+    "github-gists"
+  ],
   "engines": {
     "vscode": "^1.104.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Snippets"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",

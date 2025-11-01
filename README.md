@@ -1,71 +1,155 @@
-# gist-editor README
+# Gist Editor for VS Code
 
-This is the README for your extension "gist-editor". After writing up a brief description, we recommend including the following sections.
+Manage GitHub Gists seamlessly within VS Code. Create, edit, view, and organize your gists directly from the editor without ever leaving your workspace.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- **Manage Personal Gists**: View and edit all your GitHub gists in a dedicated sidebar
+- **Starred Gists**: Browse and open starred gists for quick reference
+- **Create New Gists**: Create gists from scratch, from current file, or from selection
+- **Syntax Highlighting**: Automatic language detection for proper code highlighting
+- **Quick Edit & Save**: Open gist files as virtual documents and save changes with keyboard shortcuts
+- **Full File Management**: Add, rename, or delete files within your gists
+- **GitHub Integration**: Open gists on GitHub, view history, and manage stars
+- **OAuth Authentication**: Seamless GitHub login via VS Code's built-in authentication
+- **Gist Visibility**: Create public or secret gists with a simple choice
+- **Fast Caching**: In-memory caching reduces API calls for smooth performance
 
-For example if there is an image subfolder under your extension project workspace:
+## Installation
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Open VS Code
+2. Go to Extensions (Ctrl+Shift+X / Cmd+Shift+X)
+3. Search for "Gist Editor"
+4. Click Install
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+## Getting Started
+
+### 1. Sign In with GitHub
+
+1. Open the **Gist Editor** sidebar (click the GitHub icon in the activity bar)
+2. Click the gear icon (⚙️) to open token configuration
+3. Select **Sign in with GitHub**
+4. A browser window will open for authentication
+5. Authorize the extension to access your gists
+
+> **Note**: VS Code securely manages your GitHub token using its built-in authentication system.
+
+### 2. Create a Gist
+
+Several options are available:
+
+**From the Sidebar:**
+1. Click the **+** button in the "My Gists" section
+2. Enter a description and choose visibility (public/secret)
+
+**From Current File:**
+1. Right-click in the editor → **Create Gist from Current File**
+2. Or use keyboard shortcut: `Ctrl+Alt+Shift+G` (Cmd+Alt+Shift+G on Mac)
+
+**From Selection:**
+1. Select code in the editor
+2. Right-click → **Create Gist from Selection**
+3. Or use keyboard shortcut: `Ctrl+Alt+Shift+S` (Cmd+Alt+Shift+S on Mac)
+
+### 3. Edit a Gist
+
+1. Click on a gist file in the sidebar to open it
+2. Edit the content in the editor
+3. Save with `Ctrl+Alt+S` (Cmd+Alt+S on Mac) or the standard save shortcut
+4. Changes are automatically synced to GitHub
+
+### 4. Manage Gist Files
+
+Right-click on a gist to:
+- **Add File**: Add a new file to the gist
+- **Rename**: Change the gist description
+- **Open in GitHub**: View the gist on GitHub.com
+- **View History**: See commit history
+- **Star/Unstar**: Toggle star status
+- **Delete**: Remove the gist
+
+Right-click on a file within a gist to:
+- **Rename**: Change the filename
+- **Open in GitHub**: View the file on GitHub
+- **Delete**: Remove the file from the gist
+
+## Keyboard Shortcuts
+
+| Action | Windows/Linux | macOS |
+|--------|---|---|
+| Save Gist | `Ctrl+Alt+S` | `Cmd+Alt+S` |
+| Create Gist | `Ctrl+Alt+G` | `Cmd+Alt+G` |
+| Create from File | `Ctrl+Alt+Shift+G` | `Cmd+Alt+Shift+G` |
+| Create from Selection | `Ctrl+Alt+Shift+S` | `Cmd+Alt+Shift+S` |
+
+## Configuration
+
+This extension uses VS Code's built-in GitHub authentication and doesn't require manual configuration for most users.
+
+**Advanced: Manual Token Entry** (if needed):
+- Open Settings
+- Search for "Gist Editor"
+- Set `gistEditor.githubToken` with a personal access token
+- Token must have `gist` scope
+
+## Supported Languages
+
+The extension automatically detects syntax highlighting for 100+ file types including:
+- Web: JavaScript, TypeScript, HTML, CSS, SCSS, Vue, React, etc.
+- Languages: Python, Java, Go, Rust, C++, C#, PHP, Ruby, etc.
+- Data: JSON, YAML, TOML, XML, etc.
+- Markup: Markdown, LaTeX, AsciiDoc, etc.
+- Infrastructure: Dockerfile, Terraform, HCL, etc.
+- And many more...
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+- VS Code 1.104.0 or higher
+- Active GitHub account
+- Internet connection (for GitHub API calls)
 
-## Extension Settings
+## Known Limitations
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+- First load of gists may take a few seconds while loading from GitHub API
+- Large gists (100+ files) may take longer to expand in the sidebar
+- Viewing gist history requires VS Code 1.110.0+
 
-For example:
+## Troubleshooting
 
-This extension contributes the following settings:
+### Cannot sign in to GitHub
+- Check your internet connection
+- Try signing out and back in via the gear icon
+- Verify your GitHub account is active
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+### Gists not showing up
+- Click the refresh icon in the sidebar
+- Check that you're signed in
+- Verify your GitHub token has the `gist` scope
 
-## Known Issues
+### Changes not syncing
+- Ensure you save the file (Ctrl+S or Cmd+S)
+- Check your internet connection
+- Verify you're still authenticated
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+## Privacy & Security
 
-## Release Notes
+- Your GitHub token is securely managed by VS Code's authentication system
+- Gists are synced directly with GitHub's servers
+- No data is stored locally except for in-memory caching
+- This extension does not collect any telemetry
 
-Users appreciate release notes as you update your extension.
+## Contributing
 
-### 1.0.0
+Found a bug or have a feature request? Open an issue on [GitHub](https://github.com/yourusername/gist-editor/issues)
 
-Initial release of ...
+## License
 
-### 1.0.1
+MIT License - See LICENSE file for details
 
-Fixed issue #.
+## Changelog
 
-### 1.1.0
-
-Added features X, Y, and Z.
+See [CHANGELOG.md](CHANGELOG.md) for release notes and version history.
 
 ---
 
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+**Enjoy managing your gists from VS Code!** 🚀
