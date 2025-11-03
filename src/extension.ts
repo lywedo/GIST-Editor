@@ -2,6 +2,8 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { GitHubService, Gist } from './githubService';
+import { GistFolderBuilder, GistFolder } from './gistFolderBuilder';
+import { parseGistDescription } from './gistDescriptionParser';
 
 // File system provider for gist files (allows editing)
 class GistFileSystemProvider implements vscode.FileSystemProvider {
@@ -181,17 +183,42 @@ class GistItem extends vscode.TreeItem {
 	// For group items (Public/Private categories)
 	public isGroup: boolean = false;
 	public groupType?: 'public' | 'private';
+
+	// For folder items
+	public isFolder: boolean = false;
+	public folder?: GistFolder;
+
 	// Track if gist is starred
 	public isStarred: boolean = false;
 
 	constructor(
-		public readonly gist: Gist,
+		public readonly gist: Gist | null = null,
 		public readonly file?: any,
 		public readonly collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
-		groupType?: 'public' | 'private'
+		groupType?: 'public' | 'private',
+		folder?: GistFolder
 	) {
+		// If this is a folder item
+		if (folder) {
+			super(folder.displayName, vscode.TreeItemCollapsibleState.Collapsed);
+			this.isFolder = true;
+			this.folder = folder;
+			this.contextValue = 'gistFolder';
+			this.iconPath = new vscode.ThemeIcon('folder');
+			const gistCount = folder.gists.length;
+			const subfolderCount = folder.subFolders.length;
+			const desc = [];
+			if (gistCount > 0) {
+				desc.push(`${gistCount} gist${gistCount !== 1 ? 's' : ''}`);
+			}
+			if (subfolderCount > 0) {
+				desc.push(`${subfolderCount} folder${subfolderCount !== 1 ? 's' : ''}`);
+			}
+			this.description = desc.join(' • ');
+			this.tooltip = `Folder: ${folder.displayName}\nGists: ${gistCount}\nSubfolders: ${subfolderCount}`;
+		}
 		// If this is a group item (Public/Private category)
-		if (groupType) {
+		else if (groupType) {
 			const label = groupType === 'public' ? '🌐 Public Gists' : '🔒 Private Gists';
 			super(label, vscode.TreeItemCollapsibleState.Collapsed);
 			this.contextValue = 'gistGroup';
@@ -200,7 +227,7 @@ class GistItem extends vscode.TreeItem {
 			this.iconPath = groupType === 'public' ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
 		}
 		// If this is a file item, show the filename
-		else if (file) {
+		else if (file && gist) {
 			super(file.filename, vscode.TreeItemCollapsibleState.None);
 			this.tooltip = `${file.filename}\nLanguage: ${file.language}\nSize: ${file.size} bytes`;
 			this.contextValue = 'gistFile';
@@ -211,9 +238,10 @@ class GistItem extends vscode.TreeItem {
 				arguments: [gist, file]
 			};
 			this.description = `${file.language} • ${file.size} bytes`;
-		} else {
+		} else if (gist) {
 			// This is a gist container
-			super(gist.description || '(No description)', collapsibleState);
+			const parsed = parseGistDescription(gist.description || '');
+			super(parsed.displayName || gist.description || '(No description)', collapsibleState);
 			this.tooltip = `${gist.description}\nCreated: ${new Date(gist.created_at).toLocaleDateString()}\nFiles: ${Object.keys(gist.files).length}`;
 			this.contextValue = 'gist';
 			this.iconPath = gist.public ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
@@ -232,9 +260,15 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	private _onDidChangeTreeData: vscode.EventEmitter<GistItem | undefined | null | void> = new vscode.EventEmitter<GistItem | undefined | null | void>();
 	readonly onDidChangeTreeData: vscode.Event<GistItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
+	private folderBuilder = new GistFolderBuilder();
+	private folderTreeCache: Map<'public' | 'private', GistFolder[]> = new Map();
+	private ungroupedGistsCache: Map<'public' | 'private', Gist[]> = new Map();
+
 	constructor(private gistType: 'my' | 'starred', private githubService: GitHubService) {}
 
 	refresh(): void {
+		this.folderTreeCache.clear();
+		this.ungroupedGistsCache.clear();
 		this._onDidChangeTreeData.fire();
 	}
 
@@ -270,10 +304,10 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 				// Create group items only if we have gists of that type
 				const groups: GistItem[] = [];
 				if (hasPublic) {
-					groups.push(new GistItem(gists[0], undefined, vscode.TreeItemCollapsibleState.Collapsed, 'public'));
+					groups.push(new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, 'public'));
 				}
 				if (hasPrivate) {
-					groups.push(new GistItem(gists[0], undefined, vscode.TreeItemCollapsibleState.Collapsed, 'private'));
+					groups.push(new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, 'private'));
 				}
 
 				return groups;
@@ -283,8 +317,8 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 				return [this.createErrorItem(error instanceof Error ? error.message : 'Unknown error')];
 			}
 		} else if (element.isGroup) {
-			// Group level - show gists of that visibility
-			console.log(`Loading ${element.groupType} gists...`);
+			// Group level - show folders and ungrouped gists
+			console.log(`Loading ${element.groupType} folder hierarchy...`);
 			try {
 				let gists: Gist[];
 				if (this.gistType === 'my') {
@@ -294,24 +328,62 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 				}
 
 				// Filter gists by visibility
+				const visibility = element.groupType!;
 				const filteredGists = gists.filter(g => {
-					if (element.groupType === 'public') {
+					if (visibility === 'public') {
 						return g.public;
 					} else {
 						return !g.public;
 					}
 				});
 
-				console.log(`Found ${filteredGists.length} ${element.groupType} gists`);
-				return filteredGists.map(gist => {
-					return new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed);
-				});
+				console.log(`Found ${filteredGists.length} ${visibility} gists`);
+
+				// Build folder tree if not cached
+				if (!this.folderTreeCache.has(visibility)) {
+					const result = this.folderBuilder.buildFolderTree(filteredGists);
+					this.folderTreeCache.set(visibility, result.folders);
+					this.ungroupedGistsCache.set(visibility, result.ungroupedGists);
+				}
+
+				const folders = this.folderTreeCache.get(visibility) || [];
+				const ungroupedGists = this.ungroupedGistsCache.get(visibility) || [];
+
+				// Create folder items
+				const folderItems = folders.map(folder =>
+					new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, folder)
+				);
+
+				// Create ungrouped gist items
+				const ungroupedItems = ungroupedGists.map(gist =>
+					new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed)
+				);
+
+				return [...folderItems, ...ungroupedItems];
 			} catch (error) {
 				console.error(`Error loading ${element.groupType} gists:`, error);
 				return [];
 			}
+		} else if (element.isFolder) {
+			// Folder level - show subfolders and gists in this folder
+			const folder = element.folder!;
+			console.log(`[Folder Expand] Expanding folder "${folder.displayName}": ${folder.subFolders.length} subfolders, ${folder.gists.length} gists`);
+
+			const folderItems = folder.subFolders.map(subfolder =>
+				new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, subfolder)
+			);
+
+			const gistItems = folder.gists.map(gist =>
+				new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed)
+			);
+
+			console.log(`[Folder Expand] Returning ${folderItems.length} folders + ${gistItems.length} gists`);
+			return [...folderItems, ...gistItems];
 		} else if (element.contextValue === 'gist') {
 			// Gist level - show files for expanded gist
+			if (!element.gist) {
+				return [];
+			}
 			const files = Object.values(element.gist.files);
 			return files.map(file => new GistItem(element.gist, file));
 		}
@@ -328,7 +400,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 			html_url: '',
 			files: {}
 		};
-		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None);
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined);
 		item.command = {
 			command: 'gist-editor.setupToken',
 			title: 'Sign in with GitHub'
@@ -347,7 +419,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 			html_url: '',
 			files: {}
 		};
-		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None);
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined);
 		item.iconPath = new vscode.ThemeIcon('error');
 		return item;
 	}
@@ -467,13 +539,17 @@ export function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 
-			// Get gist description
-			const description = await vscode.window.showInputBox({
-				prompt: 'Enter a description for your gist',
-				value: defaultDescription,
-				placeHolder: 'Gist description (optional)',
-				ignoreFocusOut: true
-			});
+			// Get folder path and display name
+			const folderAndName = await getFolderPathAndName(defaultDescription);
+			if (!folderAndName) {
+				return;
+			}
+
+			// Build the description from folder path and display name
+			let description = folderAndName.displayName;
+			if (folderAndName.folderPath) {
+				description = `${folderAndName.folderPath} - ${folderAndName.displayName}`;
+			}
 
 			// Ask if gist should be public
 			const visibility = await vscode.window.showQuickPick([
@@ -499,7 +575,7 @@ export function activate(context: vscode.ExtensionContext) {
 			const isPublic = visibility.detail === 'public';
 
 			// Create the gist
-			vscode.window.withProgress({
+			await vscode.window.withProgress({
 				location: vscode.ProgressLocation.Notification,
 				title: 'Creating gist...',
 				cancellable: false
@@ -880,6 +956,79 @@ export function activate(context: vscode.ExtensionContext) {
 		return extensionMap[extension] || 'plaintext';
 	}
 
+	// Helper function to get folder path and display name from user
+	async function getFolderPathAndName(defaultName: string): Promise<{ folderPath?: string; displayName: string } | null> {
+		// Ask if user wants to organize in a folder
+		const organizeChoice = await vscode.window.showQuickPick([
+			{
+				label: '📁 Organize in a folder',
+				description: 'Create folder hierarchy (e.g., React/Components)',
+				detail: 'with-folder'
+			},
+			{
+				label: '📄 No folder (flat)',
+				description: 'Keep at root level',
+				detail: 'no-folder'
+			}
+		], {
+			placeHolder: 'Do you want to organize this gist in a folder?',
+			ignoreFocusOut: true
+		});
+
+		if (!organizeChoice) {
+			return null;
+		}
+
+		let folderPath: string | undefined = undefined;
+		let displayName = defaultName;
+
+		if (organizeChoice.detail === 'with-folder') {
+			// Ask for folder path
+			folderPath = await vscode.window.showInputBox({
+				prompt: 'Enter folder path (use / to nest, e.g., React/Components)',
+				placeHolder: 'React/Components',
+				ignoreFocusOut: true,
+				validateInput: (value) => {
+					if (value && value.includes('--')) {
+						return 'Folder path cannot contain --';
+					}
+					return null;
+				}
+			});
+
+			if (!folderPath) {
+				return null;
+			}
+
+			// Ask for gist name/display name
+			displayName = await vscode.window.showInputBox({
+				prompt: 'Enter gist name (display name)',
+				value: defaultName,
+				placeHolder: 'My component',
+				ignoreFocusOut: true,
+				validateInput: (value) => {
+					if (!value || !value.trim()) {
+						return 'Display name cannot be empty';
+					}
+					return null;
+				}
+			}) || defaultName;
+		} else {
+			// Just ask for description
+			displayName = await vscode.window.showInputBox({
+				prompt: 'Enter a description for your gist',
+				value: defaultName,
+				placeHolder: 'Gist description',
+				ignoreFocusOut: true
+			}) || defaultName;
+		}
+
+		return {
+			folderPath,
+			displayName
+		};
+	}
+
 	// Helper functions for creating gists
 	async function createFromCurrentFile(): Promise<{ [filename: string]: { content: string } }> {
 		const activeEditor = vscode.window.activeTextEditor;
@@ -1171,13 +1320,17 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		// Get gist description
-		const description = await vscode.window.showInputBox({
-			prompt: 'Enter a description for your gist',
-			value: defaultDescription,
-			placeHolder: 'Gist description (optional)',
-			ignoreFocusOut: true
-		});
+		// Get folder path and display name
+		const folderAndName = await getFolderPathAndName(defaultDescription);
+		if (!folderAndName) {
+			return;
+		}
+
+		// Build the description from folder path and display name
+		let description = folderAndName.displayName;
+		if (folderAndName.folderPath) {
+			description = `${folderAndName.folderPath} - ${folderAndName.displayName}`;
+		}
 
 		// Ask if gist should be public
 		const visibility = await vscode.window.showQuickPick([
@@ -1585,16 +1738,18 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		const gist = gistItem.gist;
-		const currentDescription = gist.description || '';
+		const parsed = parseGistDescription(gist.description || '');
 
-		const newDescription = await vscode.window.showInputBox({
-			prompt: 'Enter new description for the gist',
-			value: currentDescription,
-			placeHolder: 'Gist description'
-		});
+		// Get new folder path and display name
+		const newFolderAndName = await getFolderPathAndName(parsed.displayName);
+		if (!newFolderAndName) {
+			return;
+		}
 
-		if (newDescription === undefined) {
-			return; // User cancelled
+		// Build the new description
+		let newDescription = newFolderAndName.displayName;
+		if (newFolderAndName.folderPath) {
+			newDescription = `${newFolderAndName.folderPath} - ${newFolderAndName.displayName}`;
 		}
 
 		try {
@@ -1699,7 +1854,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Delete file from gist command
 	const deleteFileFromGistCommand = vscode.commands.registerCommand('gist-editor.deleteFileFromGist', async (gistItem: GistItem) => {
-		if (!gistItem || !gistItem.file) {
+		if (!gistItem || !gistItem.file || !gistItem.gist) {
 			vscode.window.showErrorMessage('No file selected');
 			return;
 		}
@@ -1749,7 +1904,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Rename file in gist command
 	const renameFileInGistCommand = vscode.commands.registerCommand('gist-editor.renameFileInGist', async (gistItem: GistItem) => {
-		if (!gistItem || !gistItem.file) {
+		if (!gistItem || !gistItem.file || !gistItem.gist) {
 			vscode.window.showErrorMessage('No file selected');
 			return;
 		}
@@ -1808,7 +1963,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 			const viewGistHistoryCommand = vscode.commands.registerCommand('gist-editor.viewGistHistory', async (gistItem: GistItem) => {
-		if (!gistItem || gistItem.file) {
+		if (!gistItem || gistItem.file || !gistItem.gist) {
 			vscode.window.showErrorMessage('Please select a gist (not a file)');
 			return;
 		}
@@ -1898,7 +2053,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	   const openInGitHubCommand = vscode.commands.registerCommand('gist-editor.openInGitHub', async (gistItem: GistItem) => {
-		   if (!gistItem) {
+		   if (!gistItem || !gistItem.gist) {
 			   vscode.window.showErrorMessage('No gist or file selected');
 			   return;
 		   }
