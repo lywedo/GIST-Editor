@@ -3,7 +3,7 @@
 import * as vscode from 'vscode';
 import { GitHubService, Gist } from './githubService';
 import { GistFolderBuilder, GistFolder } from './gistFolderBuilder';
-import { parseGistDescription } from './gistDescriptionParser';
+import { parseGistDescription, createGistDescription } from './gistDescriptionParser';
 
 // File system provider for gist files (allows editing)
 class GistFileSystemProvider implements vscode.FileSystemProvider {
@@ -2072,6 +2072,114 @@ export function activate(context: vscode.ExtensionContext) {
 		   vscode.env.openExternal(vscode.Uri.parse(url));
 	   });
 
+	   const createSubfolderInFolderCommand = vscode.commands.registerCommand(
+		   'gist-editor.createSubfolderInFolder',
+		   async (gistItem: GistItem) => {
+			   if (!gistItem || !gistItem.folder) {
+				   vscode.window.showErrorMessage('No folder selected');
+				   return;
+			   }
+
+			   try {
+				   // Get the current folder path
+				   const parentPath = gistItem.folder.path;
+				   const parentPathStr = parentPath.join('/');
+
+				   // Ask user for subfolder name
+				   const subfolderName = await vscode.window.showInputBox({
+					   prompt: `Enter subfolder name (parent: ${parentPathStr})`,
+					   placeHolder: 'e.g., Advanced, Utils, Helpers',
+					   ignoreFocusOut: true,
+					   validateInput: (value) => {
+						   if (!value.trim()) {
+							   return 'Subfolder name is required';
+						   }
+						   if (value.includes('/')) {
+							   return 'Subfolder name cannot contain slashes';
+						   }
+						   return '';
+					   }
+				   });
+
+				   if (!subfolderName) {
+					   return; // User cancelled
+				   }
+
+				   // Build new folder path
+				   const newFolderPath = [...parentPath, subfolderName.trim()];
+				   const newFolderPathStr = newFolderPath.join('/');
+
+				   // Get gist name and description
+				   const gistName = await vscode.window.showInputBox({
+					   prompt: 'Enter gist name for this subfolder',
+					   placeHolder: 'e.g., My Utilities',
+					   ignoreFocusOut: true,
+					   validateInput: (value) => {
+						   if (!value.trim()) {
+							   return 'Gist name is required';
+						   }
+						   return '';
+					   }
+				   });
+
+				   if (!gistName) {
+					   return; // User cancelled
+				   }
+
+				   // Ask for visibility
+				   const visibility = await vscode.window.showQuickPick([
+					   {
+						   label: '$(lock) Private',
+						   description: 'Only you can see this gist',
+						   detail: 'private'
+					   },
+					   {
+						   label: '$(globe) Public',
+						   description: 'Anyone can see this gist',
+						   detail: 'public'
+					   }
+				   ], {
+					   placeHolder: 'Choose gist visibility',
+					   ignoreFocusOut: true
+				   });
+
+				   if (!visibility) {
+					   return; // User cancelled
+				   }
+
+				   const isPublic = visibility.detail === 'public';
+
+				   // Build description with the new subfolder path
+				   const description = createGistDescription(newFolderPath, gistName.trim());
+
+				   // Create the gist
+				   await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Notification,
+					   title: `Creating gist in ${newFolderPathStr}...`,
+					   cancellable: false
+				   }, async () => {
+					   // Create with a placeholder file containing folder info
+					   const placeholderContent = `Folder: ${newFolderPathStr}\nCreated: ${new Date().toISOString()}\n\nThis is a subfolder for organizing gists.`;
+					   const newGist = await githubService.createGist(
+						   description,
+						   { 'README.md': { content: placeholderContent } },
+						   isPublic
+					   );
+
+					   myGistsProvider.refresh();
+					   starredGistsProvider.refresh();
+
+					   vscode.window.showInformationMessage(
+						   `Gist created in folder "${newFolderPathStr}"`
+					   );
+				   });
+			   } catch (error) {
+				   console.error('Error creating subfolder:', error);
+				   vscode.window.showErrorMessage(`Failed to create subfolder: ${error}`);
+			   }
+		   }
+	   );
+
 	   // Add all commands to subscriptions
 		  context.subscriptions.push(
 			  helloWorldCommand,
@@ -2092,7 +2200,8 @@ export function activate(context: vscode.ExtensionContext) {
 			  deleteFileFromGistCommand,
 			  renameFileInGistCommand,
 			  viewGistHistoryCommand,
-			  openInGitHubCommand
+			  openInGitHubCommand,
+			  createSubfolderInFolderCommand
 		  );
 }
 

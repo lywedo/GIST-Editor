@@ -144,6 +144,11 @@
         "command": "gist-editor.toggleStarGist",
         "title": "Star/Unstar Gist",
         "icon": "$(star)"
+      },
+      {
+        "command": "gist-editor.createSubfolderInFolder",
+        "title": "Create Subfolder",
+        "icon": "$(new-folder)"
       }
     ],
     "menus": {
@@ -236,6 +241,11 @@
           "command": "gist-editor.deleteFileFromGist",
           "when": "view == gist-editor.gistList && viewItem == gistFile",
           "group": "2_danger@1"
+        },
+        {
+          "command": "gist-editor.createSubfolderInFolder",
+          "when": "view == gist-editor.gistList && viewItem == gistFolder",
+          "group": "1_modification@1"
         }
       ]
     },
