@@ -29,9 +29,9 @@ export function parseGistDescription(description: string): ParsedGistDescription
 	}
 
 	// Match pattern: "Folder/SubFolder/Item - Rest of description"
-	// Group 1: Path parts (e.g., "React/Components")
+	// Group 1: Path parts (e.g., "React/Components" or "My Folder/Sub Folder")
 	// Group 2: Display name (e.g., "Button Component")
-	const match = description.match(/^([\w\-./]+?)\s*-\s*(.+)$/);
+	const match = description.match(/^([\w\-\s./]+?)\s*-\s*(.+)$/);
 
 	if (!match) {
 		// No folder prefix, use entire description as display name
