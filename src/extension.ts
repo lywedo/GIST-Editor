@@ -318,6 +318,10 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	private ungroupedGistsCache: Map<'public' | 'private', Gist[]> = new Map();
 	private commentsCache: Map<string, GistComment[]> = new Map();
 
+	// Drag and drop support
+	dropMimeTypes = ['application/vnd.code.tree-gistItem'];
+	dragMimeTypes = ['application/vnd.code.tree-gistItem'];
+
 	constructor(private gistType: 'my' | 'starred', private githubService: GitHubService) {}
 
 	refresh(): void {
@@ -494,6 +498,87 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined);
 		item.iconPath = new vscode.ThemeIcon('error');
 		return item;
+	}
+
+	// Handle drag operations - serialize the dragged items
+	async handleDrag(source: GistItem[], dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
+		console.log(`[Drag] Dragging ${source.length} items`);
+
+		// Only allow dragging gists (not files or comments)
+		const draggableItems = source.filter(item => item.gist || item.isFolder);
+
+		if (draggableItems.length === 0) {
+			return;
+		}
+
+		// Serialize the dragged items
+		const draggedData = draggableItems.map(item => ({
+			gistId: item.gist?.id,
+			isFolder: item.isFolder,
+			folderPath: item.folder?.path
+		}));
+
+		// Set the data transfer content
+		dataTransfer.set('application/vnd.code.tree-gistItem', new vscode.DataTransferItem(JSON.stringify(draggedData)));
+		console.log(`[Drag] Serialized drag data: ${JSON.stringify(draggedData)}`);
+	}
+
+	// Handle drop operations - move gists to target folder
+	async handleDrop(target: GistItem, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
+		console.log(`[Drop] Dropping on target, isFolder: ${target.isFolder}`);
+
+		const draggedItems = dataTransfer.get('application/vnd.code.tree-gistItem');
+		if (!draggedItems) {
+			console.log('[Drop] No dragged items in data transfer');
+			return;
+		}
+
+		try {
+			const draggedItemsText = draggedItems.value;
+			console.log(`[Drop] Raw drag data: ${draggedItemsText}`);
+			const draggedData = JSON.parse(draggedItemsText);
+
+			// Only 'my' gists provider can handle drops (for moving gists)
+			if (this.gistType !== 'my') {
+				vscode.window.showWarningMessage('You can only move gists in "My Gists" view');
+				return;
+			}
+
+			// Can only drop on folders
+			if (!target.isFolder) {
+				vscode.window.showWarningMessage('Can only move gists to folders');
+				return;
+			}
+
+			// Extract target folder path
+			const targetFolderPath = target.folder?.path || [];
+			console.log(`[Drop] Target folder path: ${JSON.stringify(targetFolderPath)}`);
+
+			// Move each dragged gist
+			for (const draggedItem of draggedData) {
+				if (draggedItem.gistId) {
+					console.log(`[Drop] Moving gist ${draggedItem.gistId} to ${targetFolderPath.join('/')}`);
+
+					// Get the gist to update
+					const gist = await this.githubService.getGist(draggedItem.gistId);
+					const parsed = parseGistDescription(gist.description || '');
+
+					// Create new description with target folder path
+					const newDescription = createGistDescription(targetFolderPath, parsed.displayName);
+
+					// Update the gist with new folder path
+					await this.githubService.updateGist(draggedItem.gistId, newDescription);
+					console.log(`[Drop] Successfully updated gist ${draggedItem.gistId}`);
+				}
+			}
+
+			// Refresh the tree after moving gists
+			this.refresh();
+			vscode.window.showInformationMessage(`✓ Moved ${draggedData.length} gist${draggedData.length !== 1 ? 's' : ''} successfully`);
+		} catch (error) {
+			console.error('Error handling drop:', error);
+			vscode.window.showErrorMessage(`Failed to move gist: ${error}`);
+		}
 	}
 }
 
@@ -693,11 +778,13 @@ export function activate(context: vscode.ExtensionContext) {
 	// Track gist selection for comments view
 	const gistSelectionTracker = vscode.window.createTreeView('gist-editor.gistList', {
 		treeDataProvider: myGistsProvider,
+		dragAndDropController: myGistsProvider,
 		showCollapseAll: true
 	});
 
 	const starredSelectionTracker = vscode.window.createTreeView('gist-editor.starred', {
 		treeDataProvider: starredGistsProvider,
+		dragAndDropController: starredGistsProvider,
 		showCollapseAll: true
 	});
 
@@ -2568,6 +2655,92 @@ export function activate(context: vscode.ExtensionContext) {
 		   }
 	   );
 
+	   // Move gist to folder command
+	   const moveGistToFolderCommand = vscode.commands.registerCommand(
+		   'gist-editor.moveGistToFolder',
+		   async (gistItem: GistItem) => {
+			   if (!gistItem || !gistItem.gist) {
+				   vscode.window.showErrorMessage('No gist selected');
+				   return;
+			   }
+
+			   try {
+				   // Get all gists to build the folder tree
+				   const allGists = await githubService.getMyGists();
+				   const folderResult = new GistFolderBuilder().buildFolderTree(
+					   allGists.filter(g => g.public === gistItem.gist!.public)
+				   );
+
+				   // Create quick pick items for folders
+				   interface FolderQuickPickItem extends vscode.QuickPickItem {
+					   folderPath: string[];
+				   }
+
+				   const folderItems: FolderQuickPickItem[] = [
+					   {
+						   label: '$(home) Root (No Folder)',
+						   description: 'Move to root level',
+						   folderPath: []
+					   }
+				   ];
+
+				   // Add existing folders
+				   const allFolders = folderResult.folders;
+				   const addFoldersToList = (folders: GistFolder[], depth: number) => {
+					   for (const folder of folders) {
+						   const indent = '  '.repeat(depth);
+						   folderItems.push({
+							   label: `${indent}📁 ${folder.displayName}`,
+							   description: `${folder.gists.length} gist${folder.gists.length !== 1 ? 's' : ''}`,
+							   folderPath: folder.path
+						   });
+						   addFoldersToList(folder.subFolders, depth + 1);
+					   }
+				   };
+
+				   addFoldersToList(allFolders, 0);
+
+				   // Ask user to select target folder
+				   const selectedFolder = await vscode.window.showQuickPick(folderItems, {
+					   placeHolder: 'Select target folder for this gist',
+					   matchOnDescription: true,
+					   matchOnDetail: true
+				   });
+
+				   if (!selectedFolder) {
+					   return; // User cancelled
+				   }
+
+				   // Get current gist description
+				   const parsed = parseGistDescription(gistItem.gist.description || '');
+
+				   // Create new description with target folder path
+				   const newDescription = createGistDescription(selectedFolder.folderPath, parsed.displayName);
+
+				   // Update the gist with new folder path
+				   await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Notification,
+					   title: 'Moving gist...',
+					   cancellable: false
+				   }, async () => {
+					   await githubService.updateGist(gistItem.gist!.id, newDescription);
+					   myGistsProvider.refresh();
+					   starredGistsProvider.refresh();
+
+					   const targetPath = selectedFolder.folderPath.length > 0
+						   ? selectedFolder.folderPath.join(' > ')
+						   : 'root';
+					   vscode.window.showInformationMessage(
+						   `✓ Moved "${parsed.displayName}" to ${targetPath}`
+					   );
+				   });
+			   } catch (error) {
+				   console.error('Error moving gist:', error);
+				   vscode.window.showErrorMessage(`Failed to move gist: ${error}`);
+			   }
+		   }
+	   );
+
 	   // Add all commands to subscriptions
 		  context.subscriptions.push(
 			  helloWorldCommand,
@@ -2590,6 +2763,7 @@ export function activate(context: vscode.ExtensionContext) {
 			  viewGistHistoryCommand,
 			  openInGitHubCommand,
 			  createSubfolderInFolderCommand,
+			  moveGistToFolderCommand,
 			  addGistCommentCommand,
 			  deleteGistCommentCommand,
 			  viewGistCommentOnGitHubCommand
