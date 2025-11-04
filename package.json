@@ -2,7 +2,7 @@
   "name": "gist-editor",
   "displayName": "Gist Editor",
   "description": "Manage GitHub Gists directly from VS Code. Create, edit, view, and organize your gists without leaving the editor.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "lywedo",
   "icon": "icon.png",
   "license": "MIT",
