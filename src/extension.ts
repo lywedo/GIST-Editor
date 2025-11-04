@@ -1,7 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { GitHubService, Gist } from './githubService';
+import { GitHubService, Gist, GistComment } from './githubService';
 import { GistFolderBuilder, GistFolder } from './gistFolderBuilder';
 import { parseGistDescription, createGistDescription } from './gistDescriptionParser';
 
@@ -188,6 +188,15 @@ class GistItem extends vscode.TreeItem {
 	public isFolder: boolean = false;
 	public folder?: GistFolder;
 
+	// For comment items
+	public isComment: boolean = false;
+	public comment?: GistComment;
+	public parentGistId?: string;
+
+	// For comments folder item
+	public isCommentsFolder: boolean = false;
+	public commentsParentGistId?: string;
+
 	// Track if gist is starred
 	public isStarred: boolean = false;
 
@@ -196,10 +205,54 @@ class GistItem extends vscode.TreeItem {
 		public readonly file?: any,
 		public readonly collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
 		groupType?: 'public' | 'private',
-		folder?: GistFolder
+		folder?: GistFolder,
+		comment?: GistComment,
+		parentGistId?: string
 	) {
+		// If this is a comment item
+		if (comment && parentGistId) {
+			const author = comment.user?.login || 'Unknown';
+			const createdDate = new Date(comment.created_at);
+			const isUpdated = comment.updated_at !== comment.created_at;
+
+			// Calculate relative time (e.g., "2 days ago")
+			const now = new Date();
+			const diffMs = now.getTime() - createdDate.getTime();
+			const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+			const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+			const diffMins = Math.floor(diffMs / (1000 * 60));
+
+			let relativeTime: string;
+			if (diffMins < 1) {
+				relativeTime = 'just now';
+			} else if (diffMins < 60) {
+				relativeTime = `${diffMins}m ago`;
+			} else if (diffHours < 24) {
+				relativeTime = `${diffHours}h ago`;
+			} else if (diffDays < 7) {
+				relativeTime = `${diffDays}d ago`;
+			} else {
+				relativeTime = createdDate.toLocaleDateString();
+			}
+
+			super(`@${author} • ${relativeTime}`, vscode.TreeItemCollapsibleState.None);
+			this.isComment = true;
+			this.comment = comment;
+			this.parentGistId = parentGistId;
+			this.contextValue = 'gistComment';
+			this.iconPath = new vscode.ThemeIcon('comment');
+
+			// Show comment preview (first line, max 70 chars)
+			const firstLine = comment.body.split('\n')[0];
+			const preview = firstLine.length > 70 ? firstLine.substring(0, 70) + '...' : firstLine;
+			this.description = preview;
+
+			// Detailed tooltip
+			const updatedInfo = isUpdated ? `\nEdited: ${new Date(comment.updated_at).toLocaleDateString()}` : '';
+			this.tooltip = `${author}'s comment\nCreated: ${createdDate.toLocaleString()}${updatedInfo}\n\n${comment.body}`;
+		}
 		// If this is a folder item
-		if (folder) {
+		else if (folder) {
 			super(folder.displayName, vscode.TreeItemCollapsibleState.Collapsed);
 			this.isFolder = true;
 			this.folder = folder;
@@ -263,12 +316,14 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	private folderBuilder = new GistFolderBuilder();
 	private folderTreeCache: Map<'public' | 'private', GistFolder[]> = new Map();
 	private ungroupedGistsCache: Map<'public' | 'private', Gist[]> = new Map();
+	private commentsCache: Map<string, GistComment[]> = new Map();
 
 	constructor(private gistType: 'my' | 'starred', private githubService: GitHubService) {}
 
 	refresh(): void {
 		this.folderTreeCache.clear();
 		this.ungroupedGistsCache.clear();
+		this.commentsCache.clear();
 		this._onDidChangeTreeData.fire();
 	}
 
@@ -380,14 +435,31 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 			console.log(`[Folder Expand] Returning ${folderItems.length} folders + ${gistItems.length} gists`);
 			return [...folderItems, ...gistItems];
 		} else if (element.contextValue === 'gist') {
-			// Gist level - show files for expanded gist
+			// Gist level - show files
 			if (!element.gist) {
 				return [];
 			}
 			const files = Object.values(element.gist.files);
-			return files.map(file => new GistItem(element.gist, file));
+			const fileItems = files.map(file => new GistItem(element.gist, file));
+			return fileItems;
 		}
 		return [];
+	}
+
+	private async getComments(gistId: string): Promise<GistComment[]> {
+		// Check cache first
+		if (this.commentsCache.has(gistId)) {
+			return this.commentsCache.get(gistId)!;
+		}
+
+		try {
+			const comments = await this.githubService.getGistComments(gistId);
+			this.commentsCache.set(gistId, comments);
+			return comments;
+		} catch (error) {
+			console.error('Error fetching comments:', error);
+			throw error;
+		}
 	}
 
 	private createNotAuthenticatedItem(): GistItem {
@@ -406,6 +478,169 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 			title: 'Sign in with GitHub'
 		};
 		item.iconPath = new vscode.ThemeIcon('github');
+		return item;
+	}
+
+	private createErrorItem(message: string): GistItem {
+		const mockGist: Gist = {
+			id: 'error',
+			description: `Error: ${message}`,
+			public: false,
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString(),
+			html_url: '',
+			files: {}
+		};
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined);
+		item.iconPath = new vscode.ThemeIcon('error');
+		return item;
+	}
+}
+
+// Tree data provider for comments
+class CommentProvider implements vscode.TreeDataProvider<GistItem> {
+	private _onDidChangeTreeData: vscode.EventEmitter<GistItem | undefined | null | void> = new vscode.EventEmitter<GistItem | undefined | null | void>();
+	readonly onDidChangeTreeData: vscode.Event<GistItem | undefined | null | void> = this._onDidChangeTreeData.event;
+
+	private selectedGistId: string | null = null;
+	private selectedGist: Gist | null = null;
+	private commentsCache: Map<string, GistComment[]> = new Map();
+
+	constructor(private githubService: GitHubService) {}
+
+	/**
+	 * Set the currently selected gist and refresh the comments view
+	 */
+	setSelectedGist(gist: Gist | null): void {
+		this.selectedGist = gist;
+		this.selectedGistId = gist?.id || null;
+		this.commentsCache.clear();
+		console.log(`[CommentProvider] Selected gist: ${this.selectedGistId ? gist?.description : 'None'}`);
+		this._onDidChangeTreeData.fire();
+	}
+
+	/**
+	 * Clear selected gist (called when user logs out)
+	 */
+	clearSelectedGist(): void {
+		this.selectedGist = null;
+		this.selectedGistId = null;
+		this.commentsCache.clear();
+		console.log('[CommentProvider] Cleared selected gist due to logout');
+		this._onDidChangeTreeData.fire();
+	}
+
+	refresh(): void {
+		this.commentsCache.clear();
+		this._onDidChangeTreeData.fire();
+	}
+
+	getTreeItem(element: GistItem): vscode.TreeItem {
+		return element;
+	}
+
+	async getChildren(element?: GistItem): Promise<GistItem[]> {
+		if (!element) {
+			// Root level - check authentication first
+			if (!this.githubService.isAuthenticated()) {
+				console.log('[CommentProvider] Not authenticated');
+				return [this.createNotAuthenticatedItem()];
+			}
+
+			if (!this.selectedGistId || !this.selectedGist) {
+				console.log('[CommentProvider] No gist selected');
+				return [this.createNoGistSelectedItem()];
+			}
+
+			try {
+				console.log(`[CommentProvider] Fetching comments for gist ${this.selectedGistId}...`);
+				const comments = await this.getComments(this.selectedGistId);
+				console.log(`[CommentProvider] Found ${comments.length} comments`);
+
+				if (comments.length === 0) {
+					return [this.createNoCommentsItem()];
+				}
+
+				// Sort comments in descending order (newest first)
+				const sortedComments = comments.sort((a, b) => {
+					return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+				});
+
+				const commentItems = sortedComments.map(comment =>
+					new GistItem(null, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined, comment, this.selectedGistId!)
+				);
+
+				return commentItems;
+			} catch (error) {
+				console.error('[CommentProvider] Error fetching comments:', error);
+				return [this.createErrorItem((error instanceof Error) ? error.message : 'Failed to fetch comments')];
+			}
+		}
+
+		return [];
+	}
+
+	private async getComments(gistId: string): Promise<GistComment[]> {
+		if (this.commentsCache.has(gistId)) {
+			return this.commentsCache.get(gistId)!;
+		}
+
+		try {
+			const comments = await this.githubService.getGistComments(gistId);
+			this.commentsCache.set(gistId, comments);
+			return comments;
+		} catch (error) {
+			console.error('Error fetching comments:', error);
+			throw error;
+		}
+	}
+
+	private createNotAuthenticatedItem(): GistItem {
+		const mockGist: Gist = {
+			id: 'not-authenticated',
+			description: 'Sign in with GitHub to view comments',
+			public: false,
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString(),
+			html_url: '',
+			files: {}
+		};
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined);
+		item.command = {
+			command: 'gist-editor.setupToken',
+			title: 'Sign in with GitHub'
+		};
+		item.iconPath = new vscode.ThemeIcon('github');
+		return item;
+	}
+
+	private createNoGistSelectedItem(): GistItem {
+		const mockGist: Gist = {
+			id: 'no-gist',
+			description: 'Select a gist to view its comments',
+			public: false,
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString(),
+			html_url: '',
+			files: {}
+		};
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined);
+		item.iconPath = new vscode.ThemeIcon('comment-unresolved');
+		return item;
+	}
+
+	private createNoCommentsItem(): GistItem {
+		const mockGist: Gist = {
+			id: 'no-comments',
+			description: 'No comments on this gist yet',
+			public: false,
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString(),
+			html_url: '',
+			files: {}
+		};
+		const item = new GistItem(mockGist, undefined, vscode.TreeItemCollapsibleState.None, undefined, undefined);
+		item.iconPath = new vscode.ThemeIcon('smiley');
 		return item;
 	}
 
@@ -448,10 +683,53 @@ export function activate(context: vscode.ExtensionContext) {
 	// Create tree data providers
 	const myGistsProvider = new GistProvider('my', githubService);
 	const starredGistsProvider = new GistProvider('starred', githubService);
+	const commentProvider = new CommentProvider(githubService);
 
 	// Register tree data providers
 	vscode.window.registerTreeDataProvider('gist-editor.gistList', myGistsProvider);
 	vscode.window.registerTreeDataProvider('gist-editor.starred', starredGistsProvider);
+	vscode.window.registerTreeDataProvider('gist-editor.comments', commentProvider);
+
+	// Track gist selection for comments view
+	const gistSelectionTracker = vscode.window.createTreeView('gist-editor.gistList', {
+		treeDataProvider: myGistsProvider,
+		showCollapseAll: true
+	});
+
+	const starredSelectionTracker = vscode.window.createTreeView('gist-editor.starred', {
+		treeDataProvider: starredGistsProvider,
+		showCollapseAll: true
+	});
+
+	// Mock gist IDs that should not trigger comment loading
+	const mockGistIds = new Set(['not-authenticated', 'no-gist', 'no-comments', 'error']);
+
+	// Listen for gist selection in both views
+	gistSelectionTracker.onDidChangeSelection((e) => {
+		if (e.selection.length > 0) {
+			const selectedItem = e.selection[0];
+			if (selectedItem instanceof GistItem && selectedItem.gist && selectedItem.contextValue === 'gist') {
+				// Don't select mock items
+				if (!mockGistIds.has(selectedItem.gist.id)) {
+					console.log(`[Selection] Selected gist: ${selectedItem.gist.description}`);
+					commentProvider.setSelectedGist(selectedItem.gist);
+				}
+			}
+		}
+	});
+
+	starredSelectionTracker.onDidChangeSelection((e) => {
+		if (e.selection.length > 0) {
+			const selectedItem = e.selection[0];
+			if (selectedItem instanceof GistItem && selectedItem.gist && selectedItem.contextValue === 'gist') {
+				// Don't select mock items
+				if (!mockGistIds.has(selectedItem.gist.id)) {
+					console.log(`[Selection] Selected starred gist: ${selectedItem.gist.description}`);
+					commentProvider.setSelectedGist(selectedItem.gist);
+				}
+			}
+		}
+	});
 
 	// Register commands
 	const helloWorldCommand = vscode.commands.registerCommand('gist-editor.helloWorld', () => {
@@ -1450,6 +1728,7 @@ export function activate(context: vscode.ExtensionContext) {
 					// Auto-refresh after successful authentication
 					myGistsProvider.refresh();
 					starredGistsProvider.refresh();
+					commentProvider.refresh();
 				});
 			} catch (error) {
 				vscode.window.showErrorMessage(
@@ -1478,6 +1757,8 @@ export function activate(context: vscode.ExtensionContext) {
 					vscode.window.showInformationMessage('You have been signed out!');
 					myGistsProvider.refresh();
 					starredGistsProvider.refresh();
+					commentProvider.clearSelectedGist();
+					commentProvider.refresh();
 				} catch (error) {
 					vscode.window.showErrorMessage(`Failed to sign out: ${error}`);
 				}
@@ -1518,6 +1799,7 @@ export function activate(context: vscode.ExtensionContext) {
 				// Auto-refresh after successful token setup
 				myGistsProvider.refresh();
 				starredGistsProvider.refresh();
+				commentProvider.refresh();
 			} catch (error) {
 				vscode.window.showErrorMessage(
 					`Failed to configure GitHub token: ${error}`,
@@ -2180,6 +2462,112 @@ export function activate(context: vscode.ExtensionContext) {
 		   }
 	   );
 
+	   const addGistCommentCommand = vscode.commands.registerCommand(
+		   'gist-editor.addGistComment',
+		   async (gistItem: GistItem) => {
+			   if (!gistItem || !gistItem.gist) {
+				   vscode.window.showErrorMessage('No gist selected');
+				   return;
+			   }
+
+			   try {
+				   // Ask for comment body
+				   const commentBody = await vscode.window.showInputBox({
+					   prompt: 'Enter your comment',
+					   placeHolder: 'Write your comment here...',
+					   ignoreFocusOut: true,
+					   validateInput: (value) => {
+						   if (!value.trim()) {
+							   return 'Comment cannot be empty';
+						   }
+						   return '';
+					   }
+				   });
+
+				   if (!commentBody) {
+					   return; // User cancelled
+				   }
+
+				   // Create the comment
+				   await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Notification,
+					   title: 'Adding comment...',
+					   cancellable: false
+				   }, async () => {
+					   await githubService.createGistComment(gistItem.gist!.id, commentBody.trim());
+					   myGistsProvider.refresh();
+					   starredGistsProvider.refresh();
+					   commentProvider.refresh();
+					   vscode.window.showInformationMessage('Comment added successfully!');
+				   });
+			   } catch (error) {
+				   console.error('Error adding comment:', error);
+				   vscode.window.showErrorMessage(`Failed to add comment: ${error}`);
+			   }
+		   }
+	   );
+
+	   const deleteGistCommentCommand = vscode.commands.registerCommand(
+		   'gist-editor.deleteGistComment',
+		   async (gistItem: GistItem) => {
+			   if (!gistItem || !gistItem.isComment || !gistItem.comment || !gistItem.parentGistId) {
+				   vscode.window.showErrorMessage('No comment selected');
+				   return;
+			   }
+
+			   try {
+				   // Confirm deletion
+				   const confirmed = await vscode.window.showWarningMessage(
+					   'Are you sure you want to delete this comment?',
+					   { modal: true },
+					   'Delete'
+				   );
+
+				   if (confirmed !== 'Delete') {
+					   return; // User cancelled
+				   }
+
+				   // Delete the comment
+				   await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Notification,
+					   title: 'Deleting comment...',
+					   cancellable: false
+				   }, async () => {
+					   await githubService.deleteGistComment(gistItem.parentGistId!, gistItem.comment!.id);
+					   myGistsProvider.refresh();
+					   starredGistsProvider.refresh();
+					   commentProvider.refresh();
+					   vscode.window.showInformationMessage('Comment deleted successfully!');
+				   });
+			   } catch (error) {
+				   console.error('Error deleting comment:', error);
+				   vscode.window.showErrorMessage(`Failed to delete comment: ${error}`);
+			   }
+		   }
+	   );
+
+	   const viewGistCommentOnGitHubCommand = vscode.commands.registerCommand(
+		   'gist-editor.viewGistCommentOnGitHub',
+		   async (gistItem: GistItem) => {
+			   if (!gistItem || !gistItem.isComment || !gistItem.comment) {
+				   vscode.window.showErrorMessage('No comment selected');
+				   return;
+			   }
+
+			   try {
+				   const url = gistItem.comment.html_url;
+				   if (!url) {
+					   vscode.window.showErrorMessage('No GitHub URL found for this comment');
+					   return;
+				   }
+				   vscode.env.openExternal(vscode.Uri.parse(url));
+			   } catch (error) {
+				   console.error('Error opening comment in GitHub:', error);
+				   vscode.window.showErrorMessage(`Failed to open comment: ${error}`);
+			   }
+		   }
+	   );
+
 	   // Add all commands to subscriptions
 		  context.subscriptions.push(
 			  helloWorldCommand,
@@ -2201,7 +2589,10 @@ export function activate(context: vscode.ExtensionContext) {
 			  renameFileInGistCommand,
 			  viewGistHistoryCommand,
 			  openInGitHubCommand,
-			  createSubfolderInFolderCommand
+			  createSubfolderInFolderCommand,
+			  addGistCommentCommand,
+			  deleteGistCommentCommand,
+			  viewGistCommentOnGitHubCommand
 		  );
 }
 

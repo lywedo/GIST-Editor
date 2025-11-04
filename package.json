@@ -54,6 +54,12 @@
           "name": "Starred Gists",
           "when": "true",
           "icon": "$(star)"
+        },
+        {
+          "id": "gist-editor.comments",
+          "name": "Gist Comments",
+          "when": "true",
+          "icon": "$(comment)"
         }
       ]
     },
@@ -149,6 +155,21 @@
         "command": "gist-editor.createSubfolderInFolder",
         "title": "Create Subfolder",
         "icon": "$(new-folder)"
+      },
+      {
+        "command": "gist-editor.addGistComment",
+        "title": "Add Comment",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "gist-editor.deleteGistComment",
+        "title": "Delete Comment",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gist-editor.viewGistCommentOnGitHub",
+        "title": "View Comment on GitHub",
+        "icon": "$(link-external)"
       }
     ],
     "menus": {
@@ -246,6 +267,31 @@
           "command": "gist-editor.createSubfolderInFolder",
           "when": "view == gist-editor.gistList && viewItem == gistFolder",
           "group": "1_modification@1"
+        },
+        {
+          "command": "gist-editor.addGistComment",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "1_modification@5"
+        },
+        {
+          "command": "gist-editor.deleteGistComment",
+          "when": "view == gist-editor.gistList && viewItem == gistComment",
+          "group": "2_danger@1"
+        },
+        {
+          "command": "gist-editor.viewGistCommentOnGitHub",
+          "when": "view == gist-editor.gistList && viewItem == gistComment",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "gist-editor.deleteGistComment",
+          "when": "view == gist-editor.comments && viewItem == gistComment",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "gist-editor.viewGistCommentOnGitHub",
+          "when": "view == gist-editor.comments && viewItem == gistComment",
+          "group": "1_modification@2"
         }
       ]
     },

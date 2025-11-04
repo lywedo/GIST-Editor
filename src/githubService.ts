@@ -39,6 +39,18 @@ export interface GistRevision {
     url: string;
 }
 
+export interface GistComment {
+    id: number;
+    body: string;
+    created_at: string;
+    updated_at: string;
+    user: {
+        login: string;
+        avatar_url: string;
+    };
+    html_url: string;
+}
+
 export class GitHubService {
     private api: AxiosInstance;
     private token: string | undefined;
@@ -474,6 +486,98 @@ export class GitHubService {
             }
             console.error('Error checking if gist is starred:', error);
             throw new Error(`Failed to check if gist is starred: ${error.message}`);
+        }
+    }
+
+    // Comment operations
+    public async getGistComments(gistId: string): Promise<GistComment[]> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`[getGistComments] Fetching comments for gist ${gistId}`);
+            const response = await this.api.get(`/gists/${gistId}/comments`);
+            console.log(`[getGistComments] Found ${response.data.length} comments`);
+            return response.data;
+        } catch (error: any) {
+            console.error('Error fetching gist comments:', error);
+            if (error.response?.status === 404) {
+                throw new Error(`Gist ${gistId} not found or no access to comments`);
+            }
+            throw new Error(`Failed to fetch comments for gist ${gistId}: ${error.message}`);
+        }
+    }
+
+    public async createGistComment(gistId: string, body: string): Promise<GistComment> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`[createGistComment] Creating comment for gist ${gistId}`);
+            const response = await this.api.post(`/gists/${gistId}/comments`, { body });
+            console.log(`[createGistComment] Comment created with ID ${response.data.id}`);
+            return response.data;
+        } catch (error: any) {
+            console.error('Error creating gist comment:', error);
+            if (error.response?.status === 404) {
+                throw new Error(`Gist ${gistId} not found`);
+            }
+            throw new Error(`Failed to create comment: ${error.message}`);
+        }
+    }
+
+    public async updateGistComment(gistId: string, commentId: number, body: string): Promise<GistComment> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`[updateGistComment] Updating comment ${commentId} for gist ${gistId}`);
+            const response = await this.api.patch(`/gists/${gistId}/comments/${commentId}`, { body });
+            console.log(`[updateGistComment] Comment ${commentId} updated`);
+            return response.data;
+        } catch (error: any) {
+            console.error('Error updating gist comment:', error);
+            if (error.response?.status === 404) {
+                throw new Error(`Comment or gist not found`);
+            } else if (error.response?.status === 403) {
+                throw new Error(`You don't have permission to edit this comment`);
+            }
+            throw new Error(`Failed to update comment: ${error.message}`);
+        }
+    }
+
+    public async deleteGistComment(gistId: string, commentId: number): Promise<void> {
+        // Restore OAuth session if needed
+        await this.ensureTokenLoaded();
+
+        if (!this.isAuthenticated()) {
+            throw new Error('GitHub token not configured');
+        }
+
+        try {
+            console.log(`[deleteGistComment] Deleting comment ${commentId} from gist ${gistId}`);
+            await this.api.delete(`/gists/${gistId}/comments/${commentId}`);
+            console.log(`[deleteGistComment] Comment ${commentId} deleted`);
+        } catch (error: any) {
+            console.error('Error deleting gist comment:', error);
+            if (error.response?.status === 404) {
+                throw new Error(`Comment or gist not found`);
+            } else if (error.response?.status === 403) {
+                throw new Error(`You don't have permission to delete this comment`);
+            }
+            throw new Error(`Failed to delete comment: ${error.message}`);
         }
     }
 }
