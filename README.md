@@ -22,6 +22,7 @@ Finally, a Gist manager that **thinks like a developer**. No more flat lists of 
 ### 🎯 **Key Highlights**
 
 - 📁 **Revolutionary Folder Organization** - First VS Code extension to offer true hierarchical folder structure for gists
+- 🎯 **Intuitive Drag & Drop** - Effortlessly reorganize gists and move files between gists
 - ⚡ **Lightning Fast** - Intelligent caching system ensures instant access to your code snippets
 - 🎨 **Beautiful & Intuitive UI** - Clean, native VS Code interface that feels right at home
 - 🔐 **Seamless GitHub OAuth** - One-click authentication, no token hassles
@@ -175,6 +176,29 @@ Right-click any gist for powerful actions:
 - 📜 **View History** - See all revisions
 - ⭐ **Star/Unstar** - Mark favorites
 - 🗑️ **Delete** - Remove with confirmation
+
+### 🎯 **Drag & Drop Organization**
+
+Effortlessly reorganize your gists with intuitive drag-and-drop:
+
+**Move Gists Between Folders**:
+- Drag a gist and drop it on any folder to move it
+- Automatically updates gist organization structure
+- Works with subfolders and hierarchies
+
+**Move Files Between Gists**:
+- Drag files from one gist and drop them on another
+- Files are automatically copied to target gist
+- Source file is removed after successful transfer
+- Preserves file content and language detection
+
+**Example Workflow**:
+```
+1. Expand "React/Hooks" gist → See its files
+2. Drag "useAuth.js" file
+3. Drop on "React/Utilities" gist
+4. File instantly moved with all content preserved
+```
 
 ---
 

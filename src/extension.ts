@@ -504,8 +504,8 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	async handleDrag(source: GistItem[], dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
 		console.log(`[Drag] Dragging ${source.length} items`);
 
-		// Only allow dragging gists (not files or comments)
-		const draggableItems = source.filter(item => item.gist || item.isFolder);
+		// Allow dragging gists, folders, and files
+		const draggableItems = source.filter(item => item.gist || item.isFolder || item.file);
 
 		if (draggableItems.length === 0) {
 			return;
@@ -515,7 +515,11 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 		const draggedData = draggableItems.map(item => ({
 			gistId: item.gist?.id,
 			isFolder: item.isFolder,
-			folderPath: item.folder?.path
+			folderPath: item.folder?.path,
+			isFile: !!item.file,
+			filename: item.file?.filename,
+			fileContent: item.file?.content,
+			sourceGistId: item.gist?.id  // For files, this is the source gist
 		}));
 
 		// Set the data transfer content
@@ -523,9 +527,9 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 		console.log(`[Drag] Serialized drag data: ${JSON.stringify(draggedData)}`);
 	}
 
-	// Handle drop operations - move gists to target folder
+	// Handle drop operations - move gists/files
 	async handleDrop(target: GistItem, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
-		console.log(`[Drop] Dropping on target, isFolder: ${target.isFolder}`);
+		console.log(`[Drop] Dropping on target, isFolder: ${target.isFolder}, isGist: ${!!target.gist}`);
 
 		const draggedItems = dataTransfer.get('application/vnd.code.tree-gistItem');
 		if (!draggedItems) {
@@ -538,46 +542,111 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 			console.log(`[Drop] Raw drag data: ${draggedItemsText}`);
 			const draggedData = JSON.parse(draggedItemsText);
 
-			// Only 'my' gists provider can handle drops (for moving gists)
+			// Only 'my' gists provider can handle drops (for moving gists/files)
 			if (this.gistType !== 'my') {
 				vscode.window.showWarningMessage('You can only move gists in "My Gists" view');
 				return;
 			}
 
-			// Can only drop on folders
-			if (!target.isFolder) {
-				vscode.window.showWarningMessage('Can only move gists to folders');
-				return;
-			}
+			// Check if we're dropping files onto a gist
+			const files = draggedData.filter((item: any) => item.isFile);
+			const gists = draggedData.filter((item: any) => !item.isFile && item.gistId);
 
-			// Extract target folder path
-			const targetFolderPath = target.folder?.path || [];
-			console.log(`[Drop] Target folder path: ${JSON.stringify(targetFolderPath)}`);
-
-			// Move each dragged gist
-			for (const draggedItem of draggedData) {
-				if (draggedItem.gistId) {
-					console.log(`[Drop] Moving gist ${draggedItem.gistId} to ${targetFolderPath.join('/')}`);
-
-					// Get the gist to update
-					const gist = await this.githubService.getGist(draggedItem.gistId);
-					const parsed = parseGistDescription(gist.description || '');
-
-					// Create new description with target folder path
-					const newDescription = createGistDescription(targetFolderPath, parsed.displayName);
-
-					// Update the gist with new folder path
-					await this.githubService.updateGist(draggedItem.gistId, newDescription);
-					console.log(`[Drop] Successfully updated gist ${draggedItem.gistId}`);
+			if (files.length > 0) {
+				// Dropping files onto a target gist
+				if (!target.gist) {
+					vscode.window.showWarningMessage('Can only move files to gists');
+					return;
 				}
-			}
 
-			// Refresh the tree after moving gists
-			this.refresh();
-			vscode.window.showInformationMessage(`✓ Moved ${draggedData.length} gist${draggedData.length !== 1 ? 's' : ''} successfully`);
+				console.log(`[Drop] Moving ${files.length} files to gist ${target.gist.id}`);
+
+				// Get target gist to check for duplicate filenames
+				const targetGist = await this.githubService.getGist(target.gist.id);
+				const targetFilenames = Object.keys(targetGist.files);
+
+				// Move each file to the target gist
+				for (const file of files) {
+					const sourceGistId = file.sourceGistId;
+					let filename = file.filename;
+					let fileContent = file.fileContent;
+
+					console.log(`[Drop] Moving file "${filename}" from gist ${sourceGistId} to ${target.gist.id}`);
+
+					// If content is not available, fetch the gist to get it
+					if (!fileContent) {
+						const sourceGist = await this.githubService.getGist(sourceGistId);
+						fileContent = sourceGist.files[filename]?.content || '';
+					}
+
+					// Check if target gist already has a file with this name
+					let newFilename = filename;
+					if (targetFilenames.includes(filename)) {
+						// Rename the file by adding a suffix (e.g., "script.js" → "script_1.js")
+						const nameParts = filename.lastIndexOf('.') > 0
+							? [filename.substring(0, filename.lastIndexOf('.')), filename.substring(filename.lastIndexOf('.'))]
+							: [filename, ''];
+
+						let counter = 1;
+						let candidateName = `${nameParts[0]}_${counter}${nameParts[1]}`;
+						while (targetFilenames.includes(candidateName)) {
+							counter++;
+							candidateName = `${nameParts[0]}_${counter}${nameParts[1]}`;
+						}
+						newFilename = candidateName;
+						console.log(`[Drop] File "${filename}" already exists in target gist. Renaming to "${newFilename}"`);
+					}
+
+					// Add file to target gist with new filename
+					await this.githubService.updateGist(target.gist.id, undefined, {
+						[newFilename]: { content: fileContent }
+					});
+					console.log(`[Drop] Added file "${newFilename}" to target gist`);
+
+					// Delete file from source gist using null value (GitHub API way to delete)
+					await this.githubService.updateGist(sourceGistId, undefined, {
+						[filename]: null as any  // null deletes the file in GitHub API
+					});
+					console.log(`[Drop] Removed file "${filename}" from source gist`);
+				}
+
+				this.refresh();
+				vscode.window.showInformationMessage(`✓ Moved ${files.length} file${files.length !== 1 ? 's' : ''} successfully`);
+			} else if (gists.length > 0) {
+				// Dropping gists/folders onto a folder
+				if (!target.isFolder) {
+					vscode.window.showWarningMessage('Can only move gists to folders');
+					return;
+				}
+
+				// Extract target folder path
+				const targetFolderPath = target.folder?.path || [];
+				console.log(`[Drop] Target folder path: ${JSON.stringify(targetFolderPath)}`);
+
+				// Move each dragged gist
+				for (const draggedItem of gists) {
+					if (draggedItem.gistId) {
+						console.log(`[Drop] Moving gist ${draggedItem.gistId} to ${targetFolderPath.join('/')}`);
+
+						// Get the gist to update
+						const gist = await this.githubService.getGist(draggedItem.gistId);
+						const parsed = parseGistDescription(gist.description || '');
+
+						// Create new description with target folder path
+						const newDescription = createGistDescription(targetFolderPath, parsed.displayName);
+
+						// Update the gist with new folder path
+						await this.githubService.updateGist(draggedItem.gistId, newDescription);
+						console.log(`[Drop] Successfully updated gist ${draggedItem.gistId}`);
+					}
+				}
+
+				this.refresh();
+				vscode.window.showInformationMessage(`✓ Moved ${gists.length} gist${gists.length !== 1 ? 's' : ''} successfully`);
+			}
 		} catch (error) {
 			console.error('Error handling drop:', error);
-			vscode.window.showErrorMessage(`Failed to move gist: ${error}`);
+			vscode.window.showErrorMessage(`Failed to move: ${error}`);
 		}
 	}
 }
