@@ -170,12 +170,22 @@
         "command": "gist-editor.viewGistCommentOnGitHub",
         "title": "View Comment on GitHub",
         "icon": "$(link-external)"
+      },
+      {
+        "command": "gist-editor.search",
+        "title": "Search Gists",
+        "icon": "$(search)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "gist-editor.refresh",
+          "when": "view == gist-editor.gistList",
+          "group": "navigation"
+        },
+        {
+          "command": "gist-editor.search",
           "when": "view == gist-editor.gistList",
           "group": "navigation"
         },
@@ -330,6 +340,11 @@
         "key": "ctrl+alt+shift+s",
         "mac": "cmd+alt+shift+s",
         "when": "editorHasSelection"
+      },
+      {
+        "command": "gist-editor.search",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f"
       }
     ]
   },

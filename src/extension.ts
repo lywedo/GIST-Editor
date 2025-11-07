@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { GitHubService, Gist, GistComment } from './githubService';
 import { GistFolderBuilder, GistFolder } from './gistFolderBuilder';
 import { parseGistDescription, createGistDescription } from './gistDescriptionParser';
+import { SearchProvider, SearchResult } from './searchProvider';
 
 // File system provider for gist files (allows editing)
 class GistFileSystemProvider implements vscode.FileSystemProvider {
@@ -139,7 +140,7 @@ function getFileIcon(filename: string): vscode.ThemeIcon {
 	if (ext === '.rb') {return new vscode.ThemeIcon('file-code');}
 	if (ext === '.swift') {return new vscode.ThemeIcon('file-code');}
 	if (ext === '.kt') {return new vscode.ThemeIcon('file-code');}
-	if (ext === '.scala') {return new vscode.ThemeIcon('file-code');}
+	if (ext === '.scala' ) {return new vscode.ThemeIcon('file-code');}
 	if (ext === '.sh' || ext === '.bash' || ext === '.zsh') {return new vscode.ThemeIcon('file-code');}
 	if (ext === '.ps1') {return new vscode.ThemeIcon('file-code');}
 	if (ext === '.lua') {return new vscode.ThemeIcon('file-code');}
@@ -236,6 +237,7 @@ class GistItem extends vscode.TreeItem {
 			}
 
 			super(`@${author} • ${relativeTime}`, vscode.TreeItemCollapsibleState.None);
+			this.id = `comment:${parentGistId}:${comment.id}`;
 			this.isComment = true;
 			this.comment = comment;
 			this.parentGistId = parentGistId;
@@ -254,6 +256,10 @@ class GistItem extends vscode.TreeItem {
 		// If this is a folder item
 		else if (folder) {
 			super(folder.displayName, vscode.TreeItemCollapsibleState.Collapsed);
+			const folderId = folder.path.length > 0
+				? folder.path.map(segment => encodeURIComponent(segment)).join('/')
+				: 'root';
+			this.id = `folder:${folderId}`;
 			this.isFolder = true;
 			this.folder = folder;
 			this.contextValue = 'gistFolder';
@@ -274,6 +280,7 @@ class GistItem extends vscode.TreeItem {
 		else if (groupType) {
 			const label = groupType === 'public' ? '🌐 Public Gists' : '🔒 Private Gists';
 			super(label, vscode.TreeItemCollapsibleState.Collapsed);
+			this.id = `group:${groupType}`;
 			this.contextValue = 'gistGroup';
 			this.isGroup = true;
 			this.groupType = groupType;
@@ -282,6 +289,8 @@ class GistItem extends vscode.TreeItem {
 		// If this is a file item, show the filename
 		else if (file && gist) {
 			super(file.filename, vscode.TreeItemCollapsibleState.None);
+			const encodedFilename = encodeURIComponent(file.filename);
+			this.id = `file:${gist.id}:${encodedFilename}`;
 			this.tooltip = `${file.filename}\nLanguage: ${file.language}\nSize: ${file.size} bytes`;
 			this.contextValue = 'gistFile';
 			this.iconPath = getFileIcon(file.filename);
@@ -295,6 +304,7 @@ class GistItem extends vscode.TreeItem {
 			// This is a gist container
 			const parsed = parseGistDescription(gist.description || '');
 			super(parsed.displayName || gist.description || '(No description)', collapsibleState);
+			this.id = `gist:${gist.id}`;
 			this.tooltip = `${gist.description}\nCreated: ${new Date(gist.created_at).toLocaleDateString()}\nFiles: ${Object.keys(gist.files).length}`;
 			this.contextValue = 'gist';
 			this.iconPath = gist.public ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
@@ -317,6 +327,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	private folderTreeCache: Map<'public' | 'private', GistFolder[]> = new Map();
 	private ungroupedGistsCache: Map<'public' | 'private', Gist[]> = new Map();
 	private commentsCache: Map<string, GistComment[]> = new Map();
+	private gistToFolderMap: Map<string, GistFolder> = new Map();
 
 	// Drag and drop support
 	dropMimeTypes = ['application/vnd.code.tree-gistItem'];
@@ -328,11 +339,56 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 		this.folderTreeCache.clear();
 		this.ungroupedGistsCache.clear();
 		this.commentsCache.clear();
+		this.gistToFolderMap.clear();
 		this._onDidChangeTreeData.fire();
 	}
 
 	getTreeItem(element: GistItem): vscode.TreeItem {
 		return element;
+	}
+
+	async getParent(element: GistItem): Promise<GistItem | undefined> {
+		// For files, the parent is the gist
+		if (element.file && element.gist) {
+			return new GistItem(element.gist, undefined, vscode.TreeItemCollapsibleState.Collapsed);
+		}
+
+		// For gists, the parent is a folder or a group
+		if (element.gist && !element.file) {
+			const parsed = parseGistDescription(element.gist.description || '');
+
+			if (parsed.folderPath.length > 0) {
+				// Parent is a folder
+				const parentFolder = this.folderBuilder.getFolderByGist(this.folderTreeCache.get(element.gist.public ? 'public' : 'private') || [], element.gist.id);
+				if (parentFolder) {
+					return new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, parentFolder);
+				}
+			}
+
+			// Parent is a group (public/private)
+			const groupType = element.gist.public ? 'public' : 'private';
+			return new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, groupType);
+		}
+
+		// For folders, the parent is another folder or a group
+		if (element.isFolder && element.folder) {
+			if (element.folder.parentPath && element.folder.parentPath.length > 0) {
+				// Parent is another folder
+				const parentFolder = this.folderBuilder.getFolderByPath(this.folderTreeCache.get(element.folder.gists[0]?.public ? 'public' : 'private') || [], element.folder.parentPath);
+				if (parentFolder) {
+					return new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, parentFolder);
+				}
+			}
+
+			// Parent is a group
+			const groupType = (element.folder.gists[0] ?? this.folderBuilder.getAllGistsInFolder(element.folder)[0])?.public ? 'public' : 'private';
+			if (groupType) {
+				return new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, groupType);
+			}
+		}
+
+		// Groups and other items at the root have no parent
+		return undefined;
 	}
 
 	async getChildren(element?: GistItem): Promise<GistItem[]> {
@@ -403,6 +459,7 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 					const result = this.folderBuilder.buildFolderTree(filteredGists);
 					this.folderTreeCache.set(visibility, result.folders);
 					this.ungroupedGistsCache.set(visibility, result.ungroupedGists);
+					result.gistToFolderMap.forEach((value, key) => this.gistToFolderMap.set(key, value));
 				}
 
 				const folders = this.folderTreeCache.get(visibility) || [];
@@ -1817,6 +1874,7 @@ export function activate(context: vscode.ExtensionContext) {
 				// Open the first file for editing
 				const firstFile = Object.values(newGist.files)[0];
 				if (firstFile) {
+
 					await openGistFile(newGist, firstFile);
 				}
 			}
@@ -2810,6 +2868,266 @@ export function activate(context: vscode.ExtensionContext) {
 		   }
 	   );
 
+	   // Search command
+	   const searchCommand = vscode.commands.registerCommand('gist-editor.search', async () => {
+		   if (!githubService.isAuthenticated()) {
+			   try {
+				   await githubService.getOAuthToken();
+			   } catch (error) {
+				   const setup = await vscode.window.showErrorMessage(
+					   'You need to sign in with GitHub to search gists.',
+					   'Sign in with GitHub'
+				   );
+				   if (setup === 'Sign in with GitHub') {
+					   vscode.commands.executeCommand('gist-editor.setupToken');
+				   }
+				   return;
+			   }
+		   }
+
+		   try {
+			   // Show progress while fetching gists
+			   await vscode.window.withProgress({
+				   location: vscode.ProgressLocation.Window,
+				   title: 'Searching gists...'
+			   }, async (progress) => {
+				   // Fetch all gists
+				   progress.report({ message: 'Fetching gists...' });
+				   const myGists = await githubService.getMyGists();
+				   const starredGists = await githubService.getStarredGists();
+				   const allGists = [...myGists, ...starredGists];
+		   		   const gistSources = new Map<string, 'my' | 'starred'>();
+		   		   myGists.forEach((gistItem) => gistSources.set(gistItem.id, 'my'));
+		   		   starredGists.forEach((gistItem) => {
+		   			   if (!gistSources.has(gistItem.id)) {
+		   				   gistSources.set(gistItem.id, 'starred');
+		   			   }
+		   		   });
+		   		   const myGistIds = new Set(myGists.map(g => g.id));
+		   		   const starredGistIds = new Set(starredGists.map(g => g.id));
+
+				   // Build search index
+				   const searchProvider = new SearchProvider();
+		   		   searchProvider.buildSearchIndex(allGists, gistSources);
+
+				   // Show search input
+				   const query = await vscode.window.showInputBox({
+					   placeHolder: 'Search gists by name, description, file name, or content...',
+					   prompt: `Searching ${allGists.length} gists`,
+					   title: 'Search Gists',
+					   ignoreFocusOut: true
+				   });
+
+				   if (!query) {
+					   return;
+				   }
+
+				   // Perform search
+				   progress.report({ message: `Searching for "${query}"...` });
+				   const results = await searchProvider.searchGists(query);
+
+				   if (results.length === 0) {
+					   vscode.window.showInformationMessage(`No gists found matching "${query}"`);
+					   return;
+				   }
+
+				   // Build quick pick items
+				   const items = results.map((result) => ({
+					   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
+					   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
+					   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
+					   result
+				   }));
+
+				   // Show results in quick pick
+		   		   const selected = await vscode.window.showQuickPick(items, {
+					   placeHolder: `Found ${results.length} match${results.length !== 1 ? 'es' : ''} (Press Esc to cancel)`,
+					   matchOnDescription: true,
+					   matchOnDetail: true,
+					   ignoreFocusOut: true
+				   });
+
+				   if (!selected) {
+					   return;
+				   }
+
+				   // Process the selected result
+				   const result = selected.result;
+		   		   await revealSearchSelection(result, myGistIds, starredGistIds);
+
+				   // Open the file or gist
+				   if (result.fileName) {
+					   // Open specific file
+		   		   	const uri = vscode.Uri.parse(`gist:/${result.gistId}/${encodeURIComponent(result.fileName)}`);
+					   const doc = await vscode.workspace.openTextDocument(uri);
+					   const editor = await vscode.window.showTextDocument(doc);
+
+					   // If content match, jump to line
+					   if (result.matchType === 'content' && result.lineNumber) {
+						   const line = result.lineNumber - 1;
+						   editor.selection = new vscode.Selection(line, 0, line, 0);
+						   editor.revealRange(new vscode.Range(line, 0, line, 0));
+					   }
+				   } else {
+					   // Open gist (will show files)
+		   		   	vscode.commands.executeCommand('gist-editor.openGist', result.gist);
+				   }
+			   });
+		   } catch (error) {
+			   console.error('Error searching gists:', error);
+			   vscode.window.showErrorMessage(`Failed to search gists: ${error}`);
+		   }
+	   });
+
+	   async function revealSearchSelection(result: SearchResult, myGistIds: Set<string>, starredGistIds: Set<string>): Promise<void> {
+	   	try {
+	   		let revealed = false;
+	   		if (myGistIds.has(result.gistId)) {
+	   			revealed = await revealInTreeView(gistSelectionTracker, myGistsProvider, result);
+	   		}
+	   		if (!revealed && starredGistIds.has(result.gistId)) {
+	   			await revealInTreeView(starredSelectionTracker, starredGistsProvider, result);
+	   		}
+	   	} catch (error) {
+	   		console.warn('[Search Reveal] Failed to reveal tree selection', error);
+	   	}
+	   }
+
+	   async function revealInTreeView(
+	   	treeView: vscode.TreeView<GistItem>,
+	   	provider: GistProvider,
+	   	result: SearchResult
+	   ): Promise<boolean> {
+		console.log(`[Search Reveal] Starting reveal for gist: ${result.gistId} in tree view.`);
+	   	const visibility = result.isPublic ? 'public' : 'private';
+	   	const rootItems = await provider.getChildren();
+	   	const targetGroup = rootItems.find(item => item.isGroup && item.groupType === visibility);
+	   	if (!targetGroup) {
+			console.log(`[Search Reveal] Could not find target group: ${visibility}`);
+	   		return false;
+	   	}
+
+		console.log(`[Search Reveal] Found target group: ${targetGroup.id}. Revealing...`);
+	   	await treeView.reveal(targetGroup, { expand: true });
+
+	   	let currentParent: GistItem = targetGroup;
+	   	let pathSucceeded = true;
+	   	const accumulatedPath: string[] = [];
+
+	   	for (const segment of result.folderPath) {
+	   		accumulatedPath.push(segment);
+			console.log(`[Search Reveal] Looking for folder segment: "${segment}" in parent ${currentParent.id}`);
+	   		const children = await provider.getChildren(currentParent);
+	   		const folderItem = children.find(item => {
+	   			if (!item.isFolder || !item.folder) {
+	   				return false;
+	   			}
+				const itemPath = item.folder.path.join('/');
+				const targetPath = accumulatedPath.join('/');
+				console.log(`[Search Reveal]   - Checking folder: ${item.folder.displayName} (${itemPath}) against target ${targetPath}`);
+	   			return item.folder.path.join('/') === accumulatedPath.join('/');
+	   		});
+	   		if (!folderItem) {
+				console.log(`[Search Reveal] Could not find folder item for path: ${accumulatedPath.join('/')}`);
+	   			pathSucceeded = false;
+	   			break;
+	   		}
+			console.log(`[Search Reveal] Found folder item: ${folderItem.id}. Revealing...`);
+	   		await treeView.reveal(folderItem, { expand: true });
+	   		currentParent = folderItem;
+	   	}
+
+	   	let gistItem: GistItem | undefined;
+	   	if (pathSucceeded) {
+			console.log(`[Search Reveal] Path succeeded. Looking for gist ${result.gistId} in parent ${currentParent.id}`);
+	   		const gistCandidates = await provider.getChildren(currentParent);
+	   		gistItem = gistCandidates.find(item => item.gist && item.gist.id === result.gistId);
+	   	}
+
+	   	if (!gistItem) {
+			console.log(`[Search Reveal] Gist not found with primary path. Using fallback...`);
+	   		const fallbackPath = await findGistPath(provider, targetGroup, result.gistId);
+	   		if (!fallbackPath) {
+				console.log(`[Search Reveal] Fallback path not found for gist ${result.gistId}`);
+	   			return false;
+	   		}
+
+			console.log(`[Search Reveal] Found fallback path with ${fallbackPath.length} items.`);
+	   		for (const item of fallbackPath) {
+	   			if (item.isFolder) {
+					console.log(`[Search Reveal]   - Revealing fallback folder: ${item.id}`);
+	   				await treeView.reveal(item, { expand: true });
+	   			}
+	   			if (item.gist && item.gist.id === result.gistId) {
+					console.log(`[Search Reveal]   - Found gist item in fallback path: ${item.id}`);
+	   				gistItem = item;
+	   			}
+	   		}
+	   	}
+
+	   	if (!gistItem) {
+			console.log(`[Search Reveal] Gist item could not be found for ${result.gistId}`);
+	   		return false;
+	   	}
+
+		console.log(`[Search Reveal] Found gist item: ${gistItem.id}. Revealing...`);
+	   	await treeView.reveal(gistItem, { expand: true, select: !result.fileName, focus: !result.fileName });
+
+	   	if (result.fileName) {
+			console.log(`[Search Reveal] Looking for file: ${result.fileName}`);
+	   		const fileItems = await provider.getChildren(gistItem);
+	   		const fileItem = fileItems.find(item => item.file && item.file.filename === result.fileName);
+	   		if (fileItem) {
+				console.log(`[Search Reveal] Found file item: ${fileItem.id}. Revealing...`);
+	   			await treeView.reveal(fileItem, { select: true, focus: true });
+	   		} else {
+				console.log(`[Search Reveal] File item not found. Focusing on gist item instead.`);
+	   			await treeView.reveal(gistItem, { select: true, focus: true });
+	   		}
+	   	}
+
+		console.log(`[Search Reveal] Reveal process completed for gist: ${result.gistId}`);
+	   	return true;
+	   }
+
+	   async function findGistPath(
+	   	provider: GistProvider,
+	   	parent: GistItem,
+	   	gistId: string
+	   ): Promise<GistItem[] | undefined> {
+	   	const children = await provider.getChildren(parent);
+	   	for (const child of children) {
+	   		if (child.gist && child.gist.id === gistId) {
+	   			return [child];
+	   		}
+	   	}
+	   	for (const child of children) {
+	   		if (child.isFolder) {
+	   			const nestedPath = await findGistPath(provider, child, gistId);
+	   			if (nestedPath) {
+	   				return [child, ...nestedPath];
+	   			}
+	   		}
+	   	}
+	   	return undefined;
+	   }
+
+	   // Helper function to get match type label
+	   function getMatchTypeLabel(matchType: string): string {
+		   switch (matchType) {
+			   case 'name':
+				   return '📋 Gist Name';
+			   case 'description':
+				   return '📝 Description';
+			   case 'filename':
+				   return '📄 File Name';
+			   case 'content':
+				   return '🔍 Content';
+			   default:
+				   return '?';
+		   }
+	   }
+
 	   // Add all commands to subscriptions
 		  context.subscriptions.push(
 			  helloWorldCommand,
@@ -2835,7 +3153,8 @@ export function activate(context: vscode.ExtensionContext) {
 			  moveGistToFolderCommand,
 			  addGistCommentCommand,
 			  deleteGistCommentCommand,
-			  viewGistCommentOnGitHubCommand
+			  viewGistCommentOnGitHubCommand,
+			  searchCommand
 		  );
 }
 

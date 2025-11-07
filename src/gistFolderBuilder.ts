@@ -20,6 +20,7 @@ export interface FolderTreeResult {
 	ungroupedGists: Gist[];
 	totalFolders: number;
 	totalGists: number;
+	gistToFolderMap: Map<string, GistFolder>;
 }
 
 /**
@@ -35,6 +36,7 @@ export class GistFolderBuilder {
 	buildFolderTree(gists: Gist[]): FolderTreeResult {
 		const folders = new Map<string, GistFolder>();
 		const ungroupedGists: Gist[] = [];
+		const gistToFolderMap = new Map<string, GistFolder>();
 		let totalFolders = 0;
 
 		// First pass: parse gist descriptions and group by folder
@@ -46,7 +48,10 @@ export class GistFolderBuilder {
 				ungroupedGists.push(gist);
 			} else {
 				// Add gist to appropriate folder
-				this.addGistToFolder(folders, gist, parsed.folderPath);
+				const folder = this.addGistToFolder(folders, gist, parsed.folderPath);
+				if (folder) {
+					gistToFolderMap.set(gist.id, folder);
+				}
 			}
 		}
 
@@ -65,7 +70,8 @@ export class GistFolderBuilder {
 			folders: rootFolders,
 			ungroupedGists,
 			totalFolders,
-			totalGists: gists.length
+			totalGists: gists.length,
+			gistToFolderMap,
 		};
 	}
 
@@ -97,6 +103,7 @@ export class GistFolderBuilder {
 		if (folder) {
 			folder.gists.push(gist);
 		}
+		return folder;
 	}
 
 	/**
@@ -174,6 +181,22 @@ export class GistFolderBuilder {
 
 		traverse(tree);
 		return all;
+	}
+
+	/**
+	 * Get folder by gist ID
+	 */
+	getFolderByGist(tree: GistFolder[], gistId: string): GistFolder | undefined {
+		for (const folder of tree) {
+			if (folder.gists.some(g => g.id === gistId)) {
+				return folder;
+			}
+			const found = this.getFolderByGist(folder.subFolders, gistId);
+			if (found) {
+				return found;
+			}
+		}
+		return undefined;
 	}
 
 	/**
