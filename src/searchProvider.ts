@@ -205,6 +205,60 @@ export class SearchProvider {
   }
 
   /**
+   * Check if text matches query using fuzzy matching
+   */
+  private fuzzyMatch(text: string, query: string): { matches: boolean; score: number } {
+    const textLower = text.toLowerCase();
+    const queryLower = query.toLowerCase();
+    
+    // Exact match gets highest score
+    if (textLower === queryLower) {
+      return { matches: true, score: 1000 };
+    }
+    
+    // Contains match (substring)
+    if (textLower.includes(queryLower)) {
+      const index = textLower.indexOf(queryLower);
+      // Higher score for matches at the beginning
+      const positionScore = 100 - (index * 2);
+      return { matches: true, score: 500 + Math.max(0, positionScore) };
+    }
+    
+    // Fuzzy match: check if all query characters appear in order
+    let textIndex = 0;
+    let queryIndex = 0;
+    let matchedIndices: number[] = [];
+    
+    while (textIndex < textLower.length && queryIndex < queryLower.length) {
+      if (textLower[textIndex] === queryLower[queryIndex]) {
+        matchedIndices.push(textIndex);
+        queryIndex++;
+      }
+      textIndex++;
+    }
+    
+    // All query characters must be matched
+    if (queryIndex !== queryLower.length) {
+      return { matches: false, score: 0 };
+    }
+    
+    // Calculate fuzzy match score based on:
+    // 1. How close together the matched characters are
+    // 2. Position of first match (earlier is better)
+    let gapPenalty = 0;
+    for (let i = 1; i < matchedIndices.length; i++) {
+      const gap = matchedIndices[i] - matchedIndices[i - 1] - 1;
+      gapPenalty += gap;
+    }
+    
+    const firstMatchPosition = matchedIndices[0];
+    const positionBonus = Math.max(0, 50 - firstMatchPosition);
+    const gapScore = Math.max(0, 100 - gapPenalty);
+    
+    return { matches: true, score: gapScore + positionBonus };
+  }
+
+  /**
    * Search in a single text field
    */
   private searchInText(
@@ -215,21 +269,13 @@ export class SearchProvider {
     base: BaseResultContext,
     fileName?: string
   ): SearchResult[] {
-    if (!text || !text.toLowerCase().includes(query)) {
+    if (!text) {
       return [];
     }
 
-    // Find all matches in the text
-    const textLower = text.toLowerCase();
-    const matches: number[] = [];
-    let index = 0;
-
-    while ((index = textLower.indexOf(query, index)) !== -1) {
-      matches.push(index);
-      index += 1;
-    }
-
-    if (matches.length === 0) {
+    const fuzzyResult = this.fuzzyMatch(text, query);
+    
+    if (!fuzzyResult.matches) {
       return [];
     }
 
@@ -245,7 +291,7 @@ export class SearchProvider {
         folderPath: base.folderPath,
         isPublic: base.isPublic,
         matchContext: preview,
-        score: this.calculateScore(text, query, matchType),
+        score: this.calculateScore(text, query, matchType) + fuzzyResult.score,
         fileName,
       },
     ];
@@ -260,16 +306,14 @@ export class SearchProvider {
     fileName: string,
     base: BaseResultContext
   ): SearchResult[] {
-    if (!content.toLowerCase().includes(query)) {
-      return [];
-    }
-
     const lines = content.split('\n');
     const results: SearchResult[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (line.toLowerCase().includes(query)) {
+      const fuzzyResult = this.fuzzyMatch(line, query);
+      
+      if (fuzzyResult.matches) {
         results.push({
           gistId: base.gistId,
           gistName: base.gistName,
@@ -282,7 +326,7 @@ export class SearchProvider {
           isPublic: base.isPublic,
           lineNumber: i + 1,
           matchContext: this.getContentContext(lines, i, query),
-          score: this.calculateScore(line, query, 'content'),
+          score: this.calculateScore(line, query, 'content') + fuzzyResult.score,
         });
       }
     }

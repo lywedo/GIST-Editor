@@ -119,6 +119,34 @@ Or search "Gist Editor" in VS Code Extensions (`Ctrl+Shift+X`)
 
 ## 🛠️ Powerful Features
 
+### 🔍 **Intelligent Fuzzy Search**
+
+Find your gists instantly with powerful search capabilities:
+
+**Search Everywhere**:
+- 📄 **Gist Names** - Search by gist titles
+- 📝 **Descriptions** - Find gists by their descriptions
+- 📋 **File Names** - Locate specific files within gists
+- 🔎 **Content** - Search through actual file contents
+
+**Smart Fuzzy Matching**:
+- **Exact Match** - Perfect word matches ranked highest
+- **Substring Match** - Find text anywhere in your gists
+- **Fuzzy Match** - Characters don't need to be consecutive (e.g., "rct" finds "React")
+- **Position Bonus** - Matches near the beginning score higher
+
+**Intelligent Filtering**:
+- 🌐 Filter by public/private visibility
+- 📁 Filter by folder path
+- 🎨 Filter by programming language
+- 🎯 Combine multiple filters for precision search
+
+**Ranking & Results**:
+- Results ranked by relevance and match type
+- Line numbers for content matches
+- Context preview for better visibility
+- Top 50 results for quick browsing
+
 ### 📝 **Multi-Method Gist Creation**
 
 | Method | Shortcut | Description |

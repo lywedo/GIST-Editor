@@ -1874,7 +1874,6 @@ export function activate(context: vscode.ExtensionContext) {
 				// Open the first file for editing
 				const firstFile = Object.values(newGist.files)[0];
 				if (firstFile) {
-
 					await openGistFile(newGist, firstFile);
 				}
 			}
@@ -2886,8 +2885,8 @@ export function activate(context: vscode.ExtensionContext) {
 		   }
 
 		   try {
-			   // Show progress while fetching gists
-			   await vscode.window.withProgress({
+			   // Show progress while fetching gists and building index
+			   const { searchProvider, myGistIds, starredGistIds } = await vscode.window.withProgress({
 				   location: vscode.ProgressLocation.Window,
 				   title: 'Searching gists...'
 			   }, async (progress) => {
@@ -2910,55 +2909,80 @@ export function activate(context: vscode.ExtensionContext) {
 				   const searchProvider = new SearchProvider();
 		   		   searchProvider.buildSearchIndex(allGists, gistSources);
 
-				   // Show search input
-				   const query = await vscode.window.showInputBox({
-					   placeHolder: 'Search gists by name, description, file name, or content...',
-					   prompt: `Searching ${allGists.length} gists`,
-					   title: 'Search Gists',
-					   ignoreFocusOut: true
-				   });
+				   return { searchProvider, myGistIds, starredGistIds };
+			   });
 
-				   if (!query) {
+			   // Create quick pick with dynamic filtering
+			   const quickPick = vscode.window.createQuickPick<{
+				   label: string;
+				   description: string;
+				   detail: string;
+				   result: SearchResult;
+			   }>();
+
+			   quickPick.placeholder = 'Type to search gists by name, description, file name, or content...';
+			   quickPick.matchOnDescription = true;
+			   quickPick.matchOnDetail = true;
+			   quickPick.ignoreFocusOut = true;
+
+			   // Initial results - show all gists
+			   const initialResults = await searchProvider.searchGists('');
+			   quickPick.items = initialResults.slice(0, 50).map((result: SearchResult) => ({
+				   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
+				   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
+				   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
+				   result
+			   }));
+
+			   // Update results as user types
+			   quickPick.onDidChangeValue(async (value) => {
+				   if (!value.trim()) {
+					   // Show all when empty
+					   const allResults = await searchProvider.searchGists('');
+					   quickPick.items = allResults.slice(0, 50).map((result: SearchResult) => ({
+						   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
+						   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
+						   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
+						   result
+					   }));
+				   } else {
+					   // Perform search with current query
+					   const results = await searchProvider.searchGists(value);
+					   
+					   if (results.length === 0) {
+						   quickPick.items = [{
+							   label: '$(search) No results found',
+							   description: '',
+							   detail: `No gists match "${value}"`,
+							   result: null as any
+						   }];
+					   } else {
+						   quickPick.items = results.map((result: SearchResult) => ({
+							   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
+							   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
+							   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
+							   result
+						   }));
+					   }
+				   }
+			   });
+
+			   // Handle selection
+			   quickPick.onDidAccept(async () => {
+				   const selected = quickPick.selectedItems[0];
+				   quickPick.hide();
+
+				   if (!selected || !selected.result) {
 					   return;
 				   }
 
-				   // Perform search
-				   progress.report({ message: `Searching for "${query}"...` });
-				   const results = await searchProvider.searchGists(query);
-
-				   if (results.length === 0) {
-					   vscode.window.showInformationMessage(`No gists found matching "${query}"`);
-					   return;
-				   }
-
-				   // Build quick pick items
-				   const items = results.map((result) => ({
-					   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
-					   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
-					   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
-					   result
-				   }));
-
-				   // Show results in quick pick
-		   		   const selected = await vscode.window.showQuickPick(items, {
-					   placeHolder: `Found ${results.length} match${results.length !== 1 ? 'es' : ''} (Press Esc to cancel)`,
-					   matchOnDescription: true,
-					   matchOnDetail: true,
-					   ignoreFocusOut: true
-				   });
-
-				   if (!selected) {
-					   return;
-				   }
-
-				   // Process the selected result
 				   const result = selected.result;
-		   		   await revealSearchSelection(result, myGistIds, starredGistIds);
+				   await revealSearchSelection(result, myGistIds, starredGistIds);
 
 				   // Open the file or gist
 				   if (result.fileName) {
 					   // Open specific file
-		   		   	const uri = vscode.Uri.parse(`gist:/${result.gistId}/${encodeURIComponent(result.fileName)}`);
+					   const uri = vscode.Uri.parse(`gist:/${result.gistId}/${encodeURIComponent(result.fileName)}`);
 					   const doc = await vscode.workspace.openTextDocument(uri);
 					   const editor = await vscode.window.showTextDocument(doc);
 
@@ -2970,9 +2994,18 @@ export function activate(context: vscode.ExtensionContext) {
 					   }
 				   } else {
 					   // Open gist (will show files)
-		   		   	vscode.commands.executeCommand('gist-editor.openGist', result.gist);
+					   if (result.gist && result.gist.id) {
+						   console.log(`[Search] Opening gist from search result: ${result.gist.id}`);
+						   vscode.commands.executeCommand('gist-editor.openGist', result.gist);
+					   } else {
+						   console.error('[Search] Cannot open gist: search result is missing gist object or gist ID.', result);
+						   vscode.window.showErrorMessage('Could not open the selected gist. The search result was incomplete.');
+					   }
 				   }
 			   });
+
+			   quickPick.onDidHide(() => quickPick.dispose());
+			   quickPick.show();
 		   } catch (error) {
 			   console.error('Error searching gists:', error);
 			   vscode.window.showErrorMessage(`Failed to search gists: ${error}`);
