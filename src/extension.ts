@@ -2823,6 +2823,128 @@ export function activate(context: vscode.ExtensionContext) {
 		   }
 	   );
 
+	   const addGistToFolderCommand = vscode.commands.registerCommand(
+		   'gist-editor.addGistToFolder',
+		   async (gistItem: GistItem) => {
+			   if (!gistItem || !gistItem.folder) {
+				   vscode.window.showErrorMessage('No folder selected');
+				   return;
+			   }
+
+			   try {
+				   const folder = gistItem.folder;
+				   const folderPath = folder.path;
+				   const folderPathStr = folderPath.join('/');
+
+				   // Get gist name
+				   const gistName = await vscode.window.showInputBox({
+					   prompt: `Create gist in folder "${folderPathStr}"`,
+					   placeHolder: 'e.g., My Utility Function',
+					   ignoreFocusOut: true,
+					   validateInput: (value) => {
+						   if (!value.trim()) {
+							   return 'Gist name is required';
+						   }
+						   return '';
+					   }
+				   });
+
+				   if (!gistName) {
+					   return; // User cancelled
+				   }
+
+				   // Get file name
+				   const fileName = await vscode.window.showInputBox({
+					   prompt: 'Enter file name',
+					   placeHolder: 'e.g., index.js, helper.ts, script.py',
+					   ignoreFocusOut: true,
+					   validateInput: (value) => {
+						   if (!value.trim()) {
+							   return 'File name is required';
+						   }
+						   return '';
+					   }
+				   });
+
+				   if (!fileName) {
+					   return; // User cancelled
+				   }
+
+				   // Get file content
+				   const fileContent = await vscode.window.showInputBox({
+					   prompt: 'Enter file content',
+					   placeHolder: 'You can edit this later...',
+					   ignoreFocusOut: true
+				   });
+
+				   // Ask for visibility
+				   const visibility = await vscode.window.showQuickPick([
+					   {
+						   label: '$(lock) Private',
+						   description: 'Only you can see this gist',
+						   detail: 'private'
+					   },
+					   {
+						   label: '$(globe) Public',
+						   description: 'Anyone can see this gist',
+						   detail: 'public'
+					   }
+				   ], {
+					   placeHolder: 'Choose gist visibility',
+					   ignoreFocusOut: true
+				   });
+
+				   if (!visibility) {
+					   return; // User cancelled
+				   }
+
+				   const isPublic = visibility.detail === 'public';
+
+				   // Build description with folder path
+				   const description = createGistDescription(folderPath, gistName.trim());
+
+				   // Create the gist
+				   await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Notification,
+					   title: `Creating gist "${gistName.trim()}" in ${folderPathStr}...`,
+					   cancellable: false
+				   }, async () => {
+					   const newGist = await githubService.createGist(
+						   description,
+						   { [fileName.trim()]: { content: fileContent || '' } },
+						   isPublic
+					   );
+
+					   myGistsProvider.refresh();
+					   starredGistsProvider.refresh();
+
+					   vscode.window.showInformationMessage(
+						   `Gist "${gistName.trim()}" created in folder "${folderPathStr}"`
+					   );
+
+					   // Optionally open the gist
+					   const openGist = await vscode.window.showInformationMessage(
+						   'Open gist file?',
+						   'Yes',
+						   'No'
+					   );
+
+					   if (openGist === 'Yes') {
+						   const file = newGist.files[fileName.trim()];
+						   if (file) {
+							   const gistUri = vscode.Uri.parse(`gist://${newGist.id}/${encodeURIComponent(fileName.trim())}`);
+							   const doc = await vscode.workspace.openTextDocument(gistUri);
+							   await vscode.window.showTextDocument(doc);
+						   }
+					   }
+				   });
+			   } catch (error) {
+				   console.error('Error adding gist to folder:', error);
+				   vscode.window.showErrorMessage(`Failed to create gist: ${error}`);
+			   }
+		   }
+	   );
+
 	   const addGistCommentCommand = vscode.commands.registerCommand(
 		   'gist-editor.addGistComment',
 		   async (gistItem: GistItem) => {
@@ -3332,6 +3454,7 @@ export function activate(context: vscode.ExtensionContext) {
 			  openInGitHubCommand,
 			  createSubfolderInFolderCommand,
 			  renameFolderCommand,
+			  addGistToFolderCommand,
 			  moveGistToFolderCommand,
 			  addGistCommentCommand,
 			  deleteGistCommentCommand,

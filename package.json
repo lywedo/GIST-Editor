@@ -162,6 +162,11 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gist-editor.addGistToFolder",
+        "title": "Add Gist",
+        "icon": "$(add)"
+      },
+      {
         "command": "gist-editor.addGistComment",
         "title": "Add Comment",
         "icon": "$(comment)"
@@ -287,6 +292,11 @@
           "command": "gist-editor.renameFolder",
           "when": "view == gist-editor.gistList && viewItem == gistFolder",
           "group": "1_modification@2"
+        },
+        {
+          "command": "gist-editor.addGistToFolder",
+          "when": "view == gist-editor.gistList && viewItem == gistFolder",
+          "group": "1_modification@3"
         },
         {
           "command": "gist-editor.addGistComment",
