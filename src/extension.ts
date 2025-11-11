@@ -1,7 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { GitHubService, Gist, GistComment } from './githubService';
+import { GitHubService, Gist, GistComment, ApiUsageStats } from './githubService';
 import { GistFolderBuilder, GistFolder } from './gistFolderBuilder';
 import { parseGistDescription, createGistDescription } from './gistDescriptionParser';
 import { SearchProvider, SearchResult } from './searchProvider';
@@ -881,6 +881,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Create GitHub service
 	const githubService = new GitHubService();
+
+	// Create output channel for API usage statistics
+	const apiUsageOutputChannel = vscode.window.createOutputChannel('Gist Editor - API Usage');
+	context.subscriptions.push(apiUsageOutputChannel);
 
 	// Create gist file system provider
 	const gistFileSystemProvider = new GistFileSystemProvider(githubService);
@@ -2162,6 +2166,99 @@ export function activate(context: vscode.ExtensionContext) {
 		} catch (error) {
 			console.error('Scope check error:', error);
 			vscode.window.showErrorMessage(`Failed to check permissions: ${error}`);
+		}
+	});
+
+	// View API Usage Statistics command
+	const viewApiUsageCommand = vscode.commands.registerCommand('gist-editor.viewApiUsage', async () => {
+		try {
+			if (!githubService.isAuthenticated()) {
+				vscode.window.showWarningMessage('No GitHub token configured. Please set up authentication first.');
+				return;
+			}
+
+			const stats = githubService.getApiUsageStats();
+
+			// Clear previous output
+			apiUsageOutputChannel.clear();
+
+			// Build detailed message
+			let message = `📊 GitHub API Usage Statistics\n`;
+			message += `${'═'.repeat(60)}\n\n`;
+
+			message += `SESSION INFORMATION\n`;
+			message += `${'-'.repeat(60)}\n`;
+			const sessionStart = new Date(stats.sessionStartTime);
+			const now = new Date();
+			const sessionDuration = Math.floor((now.getTime() - stats.sessionStartTime) / 1000);
+			const hours = Math.floor(sessionDuration / 3600);
+			const minutes = Math.floor((sessionDuration % 3600) / 60);
+			const seconds = sessionDuration % 60;
+			const durationStr = hours > 0
+				? `${hours}h ${minutes}m ${seconds}s`
+				: minutes > 0
+				? `${minutes}m ${seconds}s`
+				: `${seconds}s`;
+
+			message += `Session Start:     ${sessionStart.toLocaleString()}\n`;
+			message += `Session Duration:  ${durationStr}\n`;
+			message += `Total API Calls:   ${stats.totalCalls}\n\n`;
+
+			message += `API CALLS BY OPERATION\n`;
+			message += `${'-'.repeat(60)}\n`;
+			const callTypes = Object.entries(stats.callsByType)
+				.sort((a, b) => (b[1] as number) - (a[1] as number))
+				.map(([type, count]) => {
+					const icon = type === 'gists' ? '📝' :
+								 type === 'gist-comments' ? '💬' :
+								 type === 'gist-history' ? '📜' :
+								 type === 'star-unstar' ? '⭐' :
+								 type === 'user-info' ? '👤' :
+								 '🔧';
+					return `  ${icon} ${type.padEnd(20)} : ${count}`;
+				});
+
+			if (callTypes.length === 0) {
+				message += '  No API calls made yet\n\n';
+			} else {
+				message += callTypes.join('\n') + '\n\n';
+			}
+
+			message += `RATE LIMIT STATUS\n`;
+			message += `${'-'.repeat(60)}\n`;
+			const remaining = stats.rateLimit.remaining;
+			const limit = stats.rateLimit.limit;
+			const usedPercent = limit > 0 ? Math.round((limit - remaining) / limit * 100) : 0;
+			const resetDate = new Date(stats.rateLimit.reset);
+
+			message += `Calls Remaining:   ${remaining} / ${limit}\n`;
+			message += `Usage:             ${usedPercent}% (${limit - remaining} calls used)\n`;
+			message += `Rate Limit Resets: ${resetDate.toLocaleString()}\n\n`;
+
+			message += `STATUS\n`;
+			message += `${'-'.repeat(60)}\n`;
+			if (remaining < 100 && limit > 0) {
+				message += `⚠️  WARNING: You're approaching your rate limit!\n`;
+				message += `    Please wait until the limit resets before making more requests.`;
+			} else if (remaining === 0) {
+				message += `❌ RATE LIMITED: You've hit your API limit!\n`;
+				message += `    Please wait until ${resetDate.toLocaleString()} to continue.`;
+			} else {
+				message += `✓ You have plenty of API calls available.`;
+			}
+
+			message += `\n\n${'-'.repeat(60)}\n`;
+			message += `Use 'gist-editor.resetApiUsageStats' command to reset statistics.\n`;
+
+			// Write to output channel
+			apiUsageOutputChannel.appendLine(message);
+			apiUsageOutputChannel.show(true);
+
+			vscode.window.showInformationMessage('API usage statistics displayed in "Gist Editor - API Usage" output panel');
+
+		} catch (error) {
+			console.error('Error viewing API usage:', error);
+			vscode.window.showErrorMessage(`Failed to retrieve API usage stats: ${error}`);
 		}
 	});
 
@@ -3459,6 +3556,7 @@ export function activate(context: vscode.ExtensionContext) {
 			  addGistCommentCommand,
 			  deleteGistCommentCommand,
 			  viewGistCommentOnGitHubCommand,
+			  viewApiUsageCommand,
 			  searchCommand
 		  );
 }

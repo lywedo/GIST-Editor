@@ -51,10 +51,29 @@ export interface GistComment {
     html_url: string;
 }
 
+export interface ApiUsageStats {
+    totalCalls: number;
+    callsByType: { [key: string]: number };
+    rateLimit: {
+        limit: number;
+        remaining: number;
+        reset: number;
+        resetTime: string;
+    };
+    sessionStartTime: number;
+}
+
 export class GitHubService {
     private api: AxiosInstance;
     private token: string | undefined;
     private currentUsername: string | undefined;
+    private apiCallTracker: { [key: string]: number } = {};
+    private rateLimit = {
+        limit: 0,
+        remaining: 0,
+        reset: 0
+    };
+    private sessionStartTime = Date.now();
 
     constructor() {
         this.api = axios.create({
@@ -65,7 +84,87 @@ export class GitHubService {
             }
         });
 
+        // Add response interceptor to track API calls and rate limits
+        this.api.interceptors.response.use(
+            (response) => {
+                this.trackApiCall(response.config.url || 'unknown');
+                this.updateRateLimit(response.headers);
+                return response;
+            },
+            (error) => {
+                if (error.config?.url) {
+                    this.trackApiCall(error.config.url);
+                }
+                if (error.response?.headers) {
+                    this.updateRateLimit(error.response.headers);
+                }
+                return Promise.reject(error);
+            }
+        );
+
         this.loadToken();
+    }
+
+    private trackApiCall(url: string): void {
+        // Extract operation type from URL
+        const operationType = this.getOperationType(url);
+        this.apiCallTracker[operationType] = (this.apiCallTracker[operationType] || 0) + 1;
+    }
+
+    private getOperationType(url: string): string {
+        if (!url) {
+            return 'unknown';
+        }
+
+        if (url.includes('/gists') && url.includes('/comments')) {
+            return 'gist-comments';
+        } else if (url.includes('/gists') && url.includes('/commits')) {
+            return 'gist-history';
+        } else if (url.includes('/gists')) {
+            if (url.endsWith('/star')) {
+                return 'star-unstar';
+            }
+            return 'gists';
+        } else if (url.includes('/user')) {
+            return 'user-info';
+        }
+        return 'other';
+    }
+
+    private updateRateLimit(headers: any): void {
+        const limit = headers['x-ratelimit-limit'];
+        const remaining = headers['x-ratelimit-remaining'];
+        const reset = headers['x-ratelimit-reset'];
+
+        if (limit && remaining !== undefined && reset) {
+            this.rateLimit = {
+                limit: parseInt(limit, 10),
+                remaining: parseInt(remaining, 10),
+                reset: parseInt(reset, 10) * 1000 // Convert to milliseconds
+            };
+        }
+    }
+
+    public getApiUsageStats(): ApiUsageStats {
+        const totalCalls = Object.values(this.apiCallTracker).reduce((a, b) => a + b, 0);
+        const resetDate = new Date(this.rateLimit.reset);
+
+        return {
+            totalCalls,
+            callsByType: { ...this.apiCallTracker },
+            rateLimit: {
+                limit: this.rateLimit.limit,
+                remaining: this.rateLimit.remaining,
+                reset: this.rateLimit.reset,
+                resetTime: resetDate.toLocaleString()
+            },
+            sessionStartTime: this.sessionStartTime
+        };
+    }
+
+    public resetApiUsageStats(): void {
+        this.apiCallTracker = {};
+        this.sessionStartTime = Date.now();
     }
 
     private loadToken(): void {

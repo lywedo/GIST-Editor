@@ -185,6 +185,11 @@
         "command": "gist-editor.search",
         "title": "Search Gists",
         "icon": "$(search)"
+      },
+      {
+        "command": "gist-editor.viewApiUsage",
+        "title": "View API Usage Statistics",
+        "icon": "$(graph)"
       }
     ],
     "menus": {
@@ -206,6 +211,11 @@
         },
         {
           "command": "gist-editor.setupToken",
+          "when": "view == gist-editor.gistList",
+          "group": "navigation"
+        },
+        {
+          "command": "gist-editor.viewApiUsage",
           "when": "view == gist-editor.gistList",
           "group": "navigation"
         }
