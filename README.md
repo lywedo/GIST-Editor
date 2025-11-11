@@ -147,6 +147,21 @@ Find your gists instantly with powerful search capabilities:
 - Context preview for better visibility
 - Top 50 results for quick browsing
 
+### 📁 **Smart Folder Management**
+
+Organize your gists with powerful folder operations:
+
+**Create Gists Directly in Folders**:
+- Right-click on any folder → **"Create Gist in Folder"**
+- Automatically places the new gist inside the selected folder
+- Maintains your folder hierarchy without manual renaming
+
+**Rename Folders**:
+- Right-click on any folder → **"Rename Folder"**
+- Bulk rename all gists within the folder
+- Reorganize your gist structure instantly
+- Update folder paths in batch operations
+
 ### 📝 **Multi-Method Gist Creation**
 
 | Method | Shortcut | Description |
@@ -172,6 +187,27 @@ Examples:
   "DevOps/Docker - Nginx Configuration"
 ```
 
+### 📊 **GitHub API Usage Tracking**
+
+Monitor your GitHub API consumption with built-in statistics:
+
+**Track API Activity**:
+- 📈 Real-time API call monitoring
+- 📝 Breakdown by operation type (gists, comments, history, stars, user info)
+- ⚡ Session duration and total calls made
+- 🔄 Rate limit status and reset time
+
+**Access Statistics**:
+- Click the **Graph Icon** (📊) in the "My Gists" view header
+- Command: `View API Usage Statistics`
+- Shows detailed report in output channel
+
+**Stay Within Limits**:
+- ✓ Green status if plenty of calls remaining
+- ⚠️ Warning indicator when approaching rate limit
+- ❌ Critical alert if rate-limited
+- View exactly how many calls remain (e.g., "450 / 5000")
+
 ### 💬 **Comment System**
 
 - View all comments on your gists
@@ -195,15 +231,20 @@ Examples:
 | **From File** | `Ctrl+Alt+Shift+G` | `Cmd+Alt+Shift+G` | Create from current file |
 | **From Selection** | `Ctrl+Alt+Shift+S` | `Cmd+Alt+Shift+S` | Create from selected text |
 
-### 📊 **File Management**
+### 📊 **File & Folder Management**
 
-Right-click any gist for powerful actions:
+**Right-click any gist for powerful actions:**
 - ➕ **Add File** - Expand gists with multiple files
 - ✏️ **Rename** - Update descriptions and filenames
 - 🌐 **Open in GitHub** - Jump to web interface
 - 📜 **View History** - See all revisions
 - ⭐ **Star/Unstar** - Mark favorites
 - 🗑️ **Delete** - Remove with confirmation
+
+**Right-click any folder for organization:**
+- ➕ **Create Gist in Folder** - Add new gists directly to the folder
+- ✏️ **Rename Folder** - Reorganize your folder structure
+- 🗑️ **Delete Folder** - Remove the entire folder hierarchy
 
 ### 🎯 **Drag & Drop Organization**
 
