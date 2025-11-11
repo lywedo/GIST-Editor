@@ -2675,6 +2675,154 @@ export function activate(context: vscode.ExtensionContext) {
 		   }
 	   );
 
+	   const renameFolderCommand = vscode.commands.registerCommand(
+		   'gist-editor.renameFolder',
+		   async (gistItem: GistItem) => {
+			   if (!gistItem || !gistItem.folder) {
+				   vscode.window.showErrorMessage('No folder selected');
+				   return;
+			   }
+
+			   try {
+				   const folder = gistItem.folder;
+				   const currentFolderPath = folder.path;
+				   const currentFolderName = folder.displayName;
+				   const parentPath = currentFolderPath.slice(0, -1);
+
+				   // Ask user for new folder name
+				   const newFolderName = await vscode.window.showInputBox({
+					   prompt: `Rename folder "${currentFolderName}"`,
+					   value: currentFolderName,
+					   placeHolder: 'Enter new folder name',
+					   ignoreFocusOut: true,
+					   validateInput: (value) => {
+						   if (!value.trim()) {
+							   return 'Folder name is required';
+						   }
+						   if (value.includes('/')) {
+							   return 'Folder name cannot contain slashes';
+						   }
+						   if (value.trim() === currentFolderName) {
+							   return 'New name must be different from current name';
+						   }
+						   return '';
+					   }
+				   });
+
+				   if (!newFolderName) {
+					   return; // User cancelled
+				   }
+
+				   // Build new folder path
+				   const newFolderPath = [...parentPath, newFolderName.trim()];
+				   const oldFolderPathStr = currentFolderPath.join('/');
+				   const newFolderPathStr = newFolderPath.join('/');
+
+				   // Get all gists to find those in this folder
+				   const allGists = await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Notification,
+					   title: 'Fetching gists...',
+					   cancellable: false
+				   }, async () => {
+					   return await githubService.getMyGists();
+				   });
+
+				   // Find all gists in this folder and its subfolders
+				   const gistsToUpdate = allGists.filter((gist) => {
+					   const parsed = parseGistDescription(gist.description || '');
+					   const gistPath = parsed.folderPath;
+
+					   // Check if gist is directly in this folder or in a subfolder
+					   if (gistPath.length > 0) {
+						   // Check if the gist's path starts with the current folder path
+						   let isInFolder = true;
+						   for (let i = 0; i < currentFolderPath.length; i++) {
+							   if (gistPath[i] !== currentFolderPath[i]) {
+								   isInFolder = false;
+								   break;
+							   }
+						   }
+						   return isInFolder;
+					   }
+					   return false;
+				   });
+
+				   if (gistsToUpdate.length === 0) {
+					   vscode.window.showInformationMessage(`No gists found in folder "${currentFolderName}"`);
+					   return;
+				   }
+
+				   // Confirm the rename operation
+				   const confirmed = await vscode.window.showWarningMessage(
+					   `Rename folder "${currentFolderName}" to "${newFolderName.trim()}"? This will update ${gistsToUpdate.length} gist${gistsToUpdate.length !== 1 ? 's' : ''}.`,
+					   { modal: true },
+					   'Rename'
+				   );
+
+				   if (confirmed !== 'Rename') {
+					   return; // User cancelled
+				   }
+
+				   // Update all gists in this folder
+				   await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Notification,
+					   title: `Renaming folder to "${newFolderName.trim()}"...`,
+					   cancellable: false
+				   }, async () => {
+					   let successCount = 0;
+					   let errorCount = 0;
+
+					   for (const gist of gistsToUpdate) {
+						   try {
+							   const parsed = parseGistDescription(gist.description || '');
+							   const gistPath = parsed.folderPath;
+							   const gistDisplayName = parsed.displayName;
+
+							   // Replace the old folder name segment with the new one
+							   const newGistPath = gistPath.map((segment, index) => {
+								   if (index < currentFolderPath.length) {
+									   // Replace at the same level
+									   if (index === currentFolderPath.length - 1) {
+										   return newFolderName.trim();
+									   }
+									   return segment;
+								   }
+								   return segment;
+							   });
+
+							   // Create new description
+							   const newDescription = createGistDescription(newGistPath, gistDisplayName);
+
+							   // Update the gist
+							   await githubService.updateGist(gist.id, newDescription);
+							   successCount++;
+						   } catch (error) {
+							   console.error(`Error updating gist ${gist.id}:`, error);
+							   errorCount++;
+						   }
+					   }
+
+					   // Refresh the tree
+					   myGistsProvider.refresh();
+					   starredGistsProvider.refresh();
+
+					   if (errorCount === 0) {
+						   vscode.window.showInformationMessage(
+							   `Folder renamed to "${newFolderName.trim()}" (${successCount} gist${successCount !== 1 ? 's' : ''} updated)`
+						   );
+					   } else {
+						   vscode.window.showWarningMessage(
+							   `Folder renamed with errors. Updated: ${successCount}, Failed: ${errorCount}`
+						   );
+					   }
+				   });
+			   } catch (error) {
+				   console.error('Error renaming folder:', error);
+				   vscode.window.showErrorMessage(`Failed to rename folder: ${error}`);
+			   }
+		   }
+	   );
+
 	   const addGistCommentCommand = vscode.commands.registerCommand(
 		   'gist-editor.addGistComment',
 		   async (gistItem: GistItem) => {
@@ -3183,6 +3331,7 @@ export function activate(context: vscode.ExtensionContext) {
 			  viewGistHistoryCommand,
 			  openInGitHubCommand,
 			  createSubfolderInFolderCommand,
+			  renameFolderCommand,
 			  moveGistToFolderCommand,
 			  addGistCommentCommand,
 			  deleteGistCommentCommand,

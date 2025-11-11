@@ -157,6 +157,11 @@
         "icon": "$(new-folder)"
       },
       {
+        "command": "gist-editor.renameFolder",
+        "title": "Rename Folder",
+        "icon": "$(edit)"
+      },
+      {
         "command": "gist-editor.addGistComment",
         "title": "Add Comment",
         "icon": "$(comment)"
@@ -277,6 +282,11 @@
           "command": "gist-editor.createSubfolderInFolder",
           "when": "view == gist-editor.gistList && viewItem == gistFolder",
           "group": "1_modification@1"
+        },
+        {
+          "command": "gist-editor.renameFolder",
+          "when": "view == gist-editor.gistList && viewItem == gistFolder",
+          "group": "1_modification@2"
         },
         {
           "command": "gist-editor.addGistComment",
