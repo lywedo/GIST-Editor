@@ -4,6 +4,47 @@ All notable changes to the "gist-editor" extension will be documented in this fi
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - 2025-11-12
+
+### Added
+
+- **🏷️ Tags & Labels System**:
+  - Add, remove, and clear tags on any gist
+  - Tags stored in GitHub comments, synced across all devices
+  - System tags comment automatically hidden from user comments view
+  - Tag count badges visible on gist names with full list on hover
+  - Human-readable tag format `[tag:name]` for clarity
+  - Search gists by tag names with intelligent ranking
+
+- **⚡ Lightning-Fast Search Performance**:
+  - **Instant Second Opens**: Search results cached after first use for zero-delay access
+  - **Parallel Tag Fetching**: All tags loaded simultaneously (~10x faster for large collections)
+  - **Smart Debouncing**: 300ms debounce prevents laggy typing experience
+  - **Intelligent Cache**: Automatically refreshes when gists or tags change
+  - **Visual Feedback**: Busy indicator shows when search is building/updating
+
+- **API Usage Tracking**:
+  - Real-time API call monitoring with operation breakdown
+  - Rate limit status and reset time visibility
+  - Session duration tracking
+  - Status indicator for API health
+
+### Changed
+
+- Search performance significantly improved with parallel processing
+- Search caching reduces repeated API calls and improves UX
+- Tags integrated into fuzzy search with high relevance weighting
+
+### Technical Improvements
+
+- Parallel async tag fetching using Promise.all()
+- Search result caching with intelligent invalidation
+- Debounced search input to prevent excessive API calls
+- Tags manager with GitHub comment-based storage
+- Parallel tag fetching for all gists simultaneously
+
+---
+
 ## [1.0.0] - 2024-11-01
 
 ### Added

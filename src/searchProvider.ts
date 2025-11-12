@@ -66,24 +66,33 @@ export class SearchProvider {
   ): Promise<Map<string, GistSearchData>> {
     this.searchIndex.clear();
 
+    // Fetch tags in parallel for all gists
+    const tagsFetchPromises = gists.map(async (gist) => {
+      if (gistTags && gistTags.has(gist.id)) {
+        return { gistId: gist.id, tags: gistTags.get(gist.id)! };
+      } else if (this.tagsManager) {
+        try {
+          const tags = await this.tagsManager.getTags(gist);
+          return { gistId: gist.id, tags };
+        } catch (error) {
+          console.error(`[SearchProvider] Error fetching tags for gist ${gist.id}:`, error);
+          return { gistId: gist.id, tags: [] };
+        }
+      }
+      return { gistId: gist.id, tags: [] };
+    });
+
+    // Wait for all tag fetches to complete
+    const allTags = await Promise.all(tagsFetchPromises);
+    const tagsMap = new Map(allTags.map(item => [item.gistId, item.tags]));
+
+    // Now build the index with cached tags
     for (const gist of gists) {
       const parsed = parseGistDescription(gist.description);
       const gistName = parsed.displayName;
       const folderPath = parsed.folderPath;
       const source = gistSources.get(gist.id);
-
-      // Get tags for this gist
-      let tags: string[] = [];
-      if (gistTags && gistTags.has(gist.id)) {
-        tags = gistTags.get(gist.id)!;
-      } else if (this.tagsManager) {
-        try {
-          tags = await this.tagsManager.getTags(gist);
-        } catch (error) {
-          console.error(`[SearchProvider] Error fetching tags for gist ${gist.id}:`, error);
-          tags = [];
-        }
-      }
+      const tags = tagsMap.get(gist.id) || [];
 
       // Combine all searchable text (including tags)
       const fileNames = Object.keys(gist.files).join(' ');

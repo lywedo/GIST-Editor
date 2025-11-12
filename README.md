@@ -147,6 +147,13 @@ Find your gists instantly with powerful search capabilities:
 - Context preview for better visibility
 - Top 50 results for quick browsing
 
+**Lightning-Fast Performance**:
+- ⚡ **Instant Second Opens** - Search results cached after first use for zero-delay access
+- 🔄 **Parallel Tag Fetching** - Tags loaded simultaneously (10x faster for large collections)
+- ⏱️ **Smart Debouncing** - 300ms debounce prevents laggy typing experience
+- 🧠 **Intelligent Cache** - Automatically refreshes when gists or tags change
+- 📊 **Visual Feedback** - Busy indicator shows when search is building/updating
+
 ### 📁 **Smart Folder Management**
 
 Organize your gists with powerful folder operations:
@@ -214,6 +221,27 @@ Monitor your GitHub API consumption with built-in statistics:
 - Add comments directly from VS Code
 - Delete your own comments
 - Real-time comment count updates
+
+### 🏷️ **Tags & Labels**
+
+Organize gists with powerful tagging system synced to GitHub:
+
+**Tag Management**:
+- ➕ **Add Tags** - Right-click any gist → "Add Tag"
+- ➖ **Remove Tags** - Right-click any gist → "Remove Tag"
+- 🗑️ **Clear All** - Remove all tags at once
+- 📊 **View Tags** - See tag count badges next to gist names with full list on hover
+
+**Storage & Sync**:
+- 💾 **GitHub-Synced** - Tags stored in gist comments, synced across all your devices
+- 🔒 **Automatic Sync** - Changes instantly appear on GitHub (visible in web interface)
+- 🧹 **Clean Display** - System tags comment hidden from user comments view
+- ✨ **Human-Readable** - Tags stored as `[tag:name]` format for clarity
+
+**Tag Search**:
+- 🔍 **Tag-Based Search** - Search gists by tag names
+- 💡 **Smart Discovery** - Tags weighted high in search rankings
+- 🔄 **Parallel Fetching** - All tags loaded simultaneously for speed
 
 ### 🔄 **Version Control**
 

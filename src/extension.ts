@@ -365,6 +365,13 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 		this._onDidChangeTreeData.fire();
 	}
 
+	/**
+	 * Get a copy of the tags cache for external use
+	 */
+	getTagsCache(): Map<string, string[]> {
+		return new Map(this.tagsCache);
+	}
+
 	private async getTagsForGist(gistId: string): Promise<string[]> {
 		if (!this.tagsManager) {
 			return [];
@@ -952,6 +959,20 @@ export function activate(context: vscode.ExtensionContext) {
 	// Create tags manager (uses protocol embedded in gist descriptions)
 	const tagsManager = new TagsManager(githubService);
 
+	// Search cache
+	interface SearchCache {
+		searchProvider: SearchProvider;
+		timestamp: number;
+		myGistIds: Set<string>;
+		starredGistIds: Set<string>;
+	}
+	let searchCache: SearchCache | null = null;
+
+	// Helper to clear search cache
+	const clearSearchCache = () => {
+		searchCache = null;
+	};
+
 	// Create output channel for API usage statistics
 	const apiUsageOutputChannel = vscode.window.createOutputChannel('Gist Editor - API Usage');
 	context.subscriptions.push(apiUsageOutputChannel);
@@ -974,6 +995,11 @@ export function activate(context: vscode.ExtensionContext) {
 	vscode.window.registerTreeDataProvider('gist-editor.gistList', myGistsProvider);
 	vscode.window.registerTreeDataProvider('gist-editor.starred', starredGistsProvider);
 	vscode.window.registerTreeDataProvider('gist-editor.comments', commentProvider);
+
+	// Clear search cache when tags change
+	tagsManager.onTagsChanged(() => {
+		clearSearchCache();
+	});
 
 	// Track gist selection for comments view
 	const gistSelectionTracker = vscode.window.createTreeView('gist-editor.gistList', {
@@ -1024,6 +1050,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	const refreshCommand = vscode.commands.registerCommand('gist-editor.refresh', () => {
+		clearSearchCache();
 		myGistsProvider.refresh();
 		starredGistsProvider.refresh();
 		vscode.window.showInformationMessage('Gists refreshed!');
@@ -3322,33 +3349,61 @@ export function activate(context: vscode.ExtensionContext) {
 		   }
 
 		   try {
-			   // Show progress while fetching gists and building index
-			   const { searchProvider, myGistIds, starredGistIds } = await vscode.window.withProgress({
-				   location: vscode.ProgressLocation.Window,
-				   title: 'Searching gists...'
-			   }, async (progress) => {
-				   // Fetch all gists
-				   progress.report({ message: 'Fetching gists...' });
-				   const myGists = await githubService.getMyGists();
-				   const starredGists = await githubService.getStarredGists();
-				   const allGists = [...myGists, ...starredGists];
-		   		   const gistSources = new Map<string, 'my' | 'starred'>();
-		   		   myGists.forEach((gistItem) => gistSources.set(gistItem.id, 'my'));
-		   		   starredGists.forEach((gistItem) => {
-		   			   if (!gistSources.has(gistItem.id)) {
-		   				   gistSources.set(gistItem.id, 'starred');
-		   			   }
-		   		   });
-		   		   const myGistIds = new Set(myGists.map(g => g.id));
-		   		   const starredGistIds = new Set(starredGists.map(g => g.id));
+			   let searchProvider: SearchProvider;
+			   let myGistIds: Set<string>;
+			   let starredGistIds: Set<string>;
 
-				   // Build search index with tags
-				   progress.report({ message: 'Building search index with tags...' });
-				   const searchProvider = new SearchProvider(tagsManager);
-		   		   await searchProvider.buildSearchIndex(allGists, gistSources);
+			   // Use cached search provider if available
+			   if (searchCache) {
+				   console.log('[Search] Using cached search provider');
+				   searchProvider = searchCache.searchProvider;
+				   myGistIds = searchCache.myGistIds;
+				   starredGistIds = searchCache.starredGistIds;
+			   } else {
+				   // Build search index (shown only on first open)
+				   console.log('[Search] Building new search index');
+				   ({ searchProvider, myGistIds, starredGistIds } = await vscode.window.withProgress({
+					   location: vscode.ProgressLocation.Window,
+					   title: 'Searching gists...'
+				   }, async (progress) => {
+					   // Fetch all gists
+					   progress.report({ message: 'Fetching gists...' });
+					   const myGists = await githubService.getMyGists();
+					   const starredGists = await githubService.getStarredGists();
+					   const allGists = [...myGists, ...starredGists];
+			   		   const gistSources = new Map<string, 'my' | 'starred'>();
+			   		   myGists.forEach((gistItem) => gistSources.set(gistItem.id, 'my'));
+			   		   starredGists.forEach((gistItem) => {
+			   			   if (!gistSources.has(gistItem.id)) {
+			   				   gistSources.set(gistItem.id, 'starred');
+			   			   }
+			   		   });
+			   		   const myGistIds = new Set(myGists.map(g => g.id));
+			   		   const starredGistIds = new Set(starredGists.map(g => g.id));
 
-				   return { searchProvider, myGistIds, starredGistIds };
-			   });
+					   // Build search index with tags
+					   progress.report({ message: 'Building search index with tags...' });
+					   const searchProvider = new SearchProvider(tagsManager);
+					   // Use cached tags from both providers to avoid refetching
+					   const cachedTags = new Map(myGistsProvider.getTagsCache());
+					   for (const [gistId, tags] of starredGistsProvider.getTagsCache()) {
+						   if (!cachedTags.has(gistId)) {
+							   cachedTags.set(gistId, tags);
+						   }
+					   }
+			   		   await searchProvider.buildSearchIndex(allGists, gistSources, cachedTags);
+
+					   return { searchProvider, myGistIds, starredGistIds };
+				   }));
+
+				   // Cache the search provider
+				   searchCache = {
+					   searchProvider,
+					   myGistIds,
+					   starredGistIds,
+					   timestamp: Date.now()
+				   };
+			   }
 
 			   // Create quick pick with dynamic filtering
 			   const quickPick = vscode.window.createQuickPick<{
@@ -3380,37 +3435,56 @@ export function activate(context: vscode.ExtensionContext) {
 				   result
 			   }));
 
-			   // Update results as user types
-			   quickPick.onDidChangeValue(async (value) => {
-				   if (!value.trim()) {
-					   // Show all when empty
-					   const allResults = await searchProvider.searchGists('');
-					   quickPick.items = allResults.slice(0, 50).map((result: SearchResult) => ({
-						   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
-						   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
-						   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}${formatSearchTags(result.tags)}`,
-						   result
-					   }));
-				   } else {
-					   // Perform search with current query
-					   const results = await searchProvider.searchGists(value);
+			   // Update results as user types with debouncing
+			   let searchTimeout: NodeJS.Timeout | undefined;
+			   let isSearching = false;
 
-					   if (results.length === 0) {
-						   quickPick.items = [{
-							   label: '$(search) No results found',
-							   description: '',
-							   detail: `No gists match "${value}"`,
-							   result: null as any
-						   }];
-					   } else {
-						   quickPick.items = results.map((result: SearchResult) => ({
-							   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
-							   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
-							   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}${formatSearchTags(result.tags)}`,
-							   result
-						   }));
-					   }
+			   quickPick.onDidChangeValue(async (value) => {
+				   // Clear previous timeout
+				   if (searchTimeout) {
+					   clearTimeout(searchTimeout);
 				   }
+
+				   // Debounce search: wait 300ms before searching
+				   searchTimeout = setTimeout(async () => {
+					   try {
+						   isSearching = true;
+						   quickPick.busy = true;
+
+						   if (!value.trim()) {
+							   // Show all when empty
+							   const allResults = await searchProvider.searchGists('');
+							   quickPick.items = allResults.slice(0, 50).map((result: SearchResult) => ({
+								   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
+								   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
+								   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}${formatSearchTags(result.tags)}`,
+								   result
+							   }));
+						   } else {
+							   // Perform search with current query
+							   const results = await searchProvider.searchGists(value);
+
+							   if (results.length === 0) {
+								   quickPick.items = [{
+									   label: '$(search) No results found',
+									   description: '',
+									   detail: `No gists match "${value}"`,
+									   result: null as any
+								   }];
+							   } else {
+								   quickPick.items = results.map((result: SearchResult) => ({
+									   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
+									   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
+									   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}${formatSearchTags(result.tags)}`,
+									   result
+								   }));
+							   }
+						   }
+					   } finally {
+						   isSearching = false;
+						   quickPick.busy = false;
+					   }
+				   }, 300);
 			   });
 
 			   // Handle selection
