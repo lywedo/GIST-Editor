@@ -5,6 +5,7 @@ import { GitHubService, Gist, GistComment, ApiUsageStats } from './githubService
 import { GistFolderBuilder, GistFolder } from './gistFolderBuilder';
 import { parseGistDescription, createGistDescription } from './gistDescriptionParser';
 import { SearchProvider, SearchResult } from './searchProvider';
+import { TagsManager } from './tagsManager';
 
 // File system provider for gist files (allows editing)
 class GistFileSystemProvider implements vscode.FileSystemProvider {
@@ -201,6 +202,11 @@ class GistItem extends vscode.TreeItem {
 	// Track if gist is starred
 	public isStarred: boolean = false;
 
+	// For tag items
+	public isTag: boolean = false;
+	public isTagsFolder: boolean = false;
+	public tag?: string;
+
 	constructor(
 		public readonly gist: Gist | null = null,
 		public readonly file?: any,
@@ -208,7 +214,8 @@ class GistItem extends vscode.TreeItem {
 		groupType?: 'public' | 'private',
 		folder?: GistFolder,
 		comment?: GistComment,
-		parentGistId?: string
+		parentGistId?: string,
+		public tags?: string[]
 	) {
 		// If this is a comment item
 		if (comment && parentGistId) {
@@ -305,7 +312,6 @@ class GistItem extends vscode.TreeItem {
 			const parsed = parseGistDescription(gist.description || '');
 			super(parsed.displayName || gist.description || '(No description)', collapsibleState);
 			this.id = `gist:${gist.id}`;
-			this.tooltip = `${gist.description}\nCreated: ${new Date(gist.created_at).toLocaleDateString()}\nFiles: ${Object.keys(gist.files).length}`;
 			this.contextValue = 'gist';
 			this.iconPath = gist.public ? new vscode.ThemeIcon('globe') : new vscode.ThemeIcon('lock');
 
@@ -313,7 +319,21 @@ class GistItem extends vscode.TreeItem {
 			const fileCount = Object.keys(gist.files).length;
 			const visibility = gist.public ? 'Public' : 'Private';
 			const starIndicator = this.isStarred ? '⭐' : '';
-			this.description = `${fileCount} file${fileCount !== 1 ? 's' : ''} • ${visibility} ${starIndicator}`.trim();
+
+			// Build description with tag count badge
+			const descParts = [`${fileCount} file${fileCount !== 1 ? 's' : ''}`, visibility, starIndicator].filter(Boolean);
+			if (tags && tags.length > 0) {
+				descParts.push(`[#${tags.length}]`);
+			}
+			this.description = descParts.join(' • ');
+
+			// Build tooltip with full tag list
+			let tooltipText = `${gist.description}\nCreated: ${new Date(gist.created_at).toLocaleDateString()}\nFiles: ${fileCount}`;
+			if (tags && tags.length > 0) {
+				const tagsDisplay = tags.map(t => `#${t}`).join(', ');
+				tooltipText += `\nTags: ${tagsDisplay}`;
+			}
+			this.tooltip = tooltipText;
 		}
 	}
 }
@@ -327,20 +347,56 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	private folderTreeCache: Map<'public' | 'private', GistFolder[]> = new Map();
 	private ungroupedGistsCache: Map<'public' | 'private', Gist[]> = new Map();
 	private commentsCache: Map<string, GistComment[]> = new Map();
+	private tagsCache: Map<string, string[]> = new Map(); // gistId -> tags
 	private gistToFolderMap: Map<string, GistFolder> = new Map();
 
 	// Drag and drop support
 	dropMimeTypes = ['application/vnd.code.tree-gistItem'];
 	dragMimeTypes = ['application/vnd.code.tree-gistItem'];
 
-	constructor(private gistType: 'my' | 'starred', private githubService: GitHubService) {}
+	constructor(private gistType: 'my' | 'starred', private githubService: GitHubService, private tagsManager?: any) {}
 
 	refresh(): void {
 		this.folderTreeCache.clear();
 		this.ungroupedGistsCache.clear();
 		this.commentsCache.clear();
+		this.tagsCache.clear();
 		this.gistToFolderMap.clear();
 		this._onDidChangeTreeData.fire();
+	}
+
+	private async getTagsForGist(gistId: string): Promise<string[]> {
+		if (!this.tagsManager) {
+			return [];
+		}
+
+		// Check cache first
+		if (this.tagsCache.has(gistId)) {
+			return this.tagsCache.get(gistId)!;
+		}
+
+		// Fetch from API
+		try {
+			// Get the full gist object - we need it for tagsManager.getTags
+			let gists: Gist[] = [];
+			if (this.gistType === 'my') {
+				gists = await this.githubService.getMyGists();
+			} else {
+				gists = await this.githubService.getStarredGists();
+			}
+
+			const gist = gists.find(g => g.id === gistId);
+			if (!gist) {
+				return [];
+			}
+
+			const tags = await this.tagsManager.getTags(gist);
+			this.tagsCache.set(gistId, tags);
+			return tags;
+		} catch (error) {
+			console.error(`[TagsManager] Error fetching tags for gist ${gistId}:`, error);
+			return [];
+		}
 	}
 
 	getTreeItem(element: GistItem): vscode.TreeItem {
@@ -470,12 +526,15 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 					new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, folder)
 				);
 
-				// Create ungrouped gist items
-				const ungroupedItems = ungroupedGists.map(gist =>
-					new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed)
+				// Fetch tags for ungrouped gists
+				const ungroupedItemsWithTags = await Promise.all(
+					ungroupedGists.map(async (gist) => {
+						const tags = await this.getTagsForGist(gist.id);
+						return new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, undefined, undefined, undefined, tags);
+					})
 				);
 
-				return [...folderItems, ...ungroupedItems];
+				return [...folderItems, ...ungroupedItemsWithTags];
 			} catch (error) {
 				console.error(`Error loading ${element.groupType} gists:`, error);
 				return [];
@@ -489,12 +548,16 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 				new GistItem(null, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, subfolder)
 			);
 
-			const gistItems = folder.gists.map(gist =>
-				new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed)
+			// Fetch tags for gists in this folder
+			const gistItemsWithTags = await Promise.all(
+				folder.gists.map(async (gist) => {
+					const tags = await this.getTagsForGist(gist.id);
+					return new GistItem(gist, undefined, vscode.TreeItemCollapsibleState.Collapsed, undefined, undefined, undefined, undefined, tags);
+				})
 			);
 
-			console.log(`[Folder Expand] Returning ${folderItems.length} folders + ${gistItems.length} gists`);
-			return [...folderItems, ...gistItems];
+			console.log(`[Folder Expand] Returning ${folderItems.length} folders + ${gistItemsWithTags.length} gists`);
+			return [...folderItems, ...gistItemsWithTags];
 		} else if (element.contextValue === 'gist') {
 			// Gist level - show files
 			if (!element.gist) {
@@ -515,8 +578,10 @@ class GistProvider implements vscode.TreeDataProvider<GistItem> {
 
 		try {
 			const comments = await this.githubService.getGistComments(gistId);
-			this.commentsCache.set(gistId, comments);
-			return comments;
+			// Filter out system comments (tags comment)
+			const userComments = comments.filter(c => !c.body.includes('[GIST_TAGS]'));
+			this.commentsCache.set(gistId, userComments);
+			return userComments;
 		} catch (error) {
 			console.error('Error fetching comments:', error);
 			throw error;
@@ -798,8 +863,10 @@ class CommentProvider implements vscode.TreeDataProvider<GistItem> {
 
 		try {
 			const comments = await this.githubService.getGistComments(gistId);
-			this.commentsCache.set(gistId, comments);
-			return comments;
+			// Filter out system comments (tags comment)
+			const userComments = comments.filter(c => !c.body.includes('[GIST_TAGS]'));
+			this.commentsCache.set(gistId, userComments);
+			return userComments;
 		} catch (error) {
 			console.error('Error fetching comments:', error);
 			throw error;
@@ -882,6 +949,9 @@ export function activate(context: vscode.ExtensionContext) {
 	// Create GitHub service
 	const githubService = new GitHubService();
 
+	// Create tags manager (uses protocol embedded in gist descriptions)
+	const tagsManager = new TagsManager(githubService);
+
 	// Create output channel for API usage statistics
 	const apiUsageOutputChannel = vscode.window.createOutputChannel('Gist Editor - API Usage');
 	context.subscriptions.push(apiUsageOutputChannel);
@@ -896,8 +966,8 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	// Create tree data providers
-	const myGistsProvider = new GistProvider('my', githubService);
-	const starredGistsProvider = new GistProvider('starred', githubService);
+	const myGistsProvider = new GistProvider('my', githubService, tagsManager);
+	const starredGistsProvider = new GistProvider('starred', githubService, tagsManager);
 	const commentProvider = new CommentProvider(githubService);
 
 	// Register tree data providers
@@ -3272,9 +3342,10 @@ export function activate(context: vscode.ExtensionContext) {
 		   		   const myGistIds = new Set(myGists.map(g => g.id));
 		   		   const starredGistIds = new Set(starredGists.map(g => g.id));
 
-				   // Build search index
-				   const searchProvider = new SearchProvider();
-		   		   searchProvider.buildSearchIndex(allGists, gistSources);
+				   // Build search index with tags
+				   progress.report({ message: 'Building search index with tags...' });
+				   const searchProvider = new SearchProvider(tagsManager);
+		   		   await searchProvider.buildSearchIndex(allGists, gistSources);
 
 				   return { searchProvider, myGistIds, starredGistIds };
 			   });
@@ -3292,12 +3363,20 @@ export function activate(context: vscode.ExtensionContext) {
 			   quickPick.matchOnDetail = true;
 			   quickPick.ignoreFocusOut = true;
 
+			   // Helper to format tags in search results
+			   const formatSearchTags = (tags?: string[]): string => {
+				   if (!tags || tags.length === 0) {
+					   return '';
+				   }
+				   return ` | ${tags.map(t => `#${t}`).join(' ')}`;
+			   };
+
 			   // Initial results - show all gists
 			   const initialResults = await searchProvider.searchGists('');
 			   quickPick.items = initialResults.slice(0, 50).map((result: SearchResult) => ({
 				   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
 				   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
-				   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
+				   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}${formatSearchTags(result.tags)}`,
 				   result
 			   }));
 
@@ -3309,13 +3388,13 @@ export function activate(context: vscode.ExtensionContext) {
 					   quickPick.items = allResults.slice(0, 50).map((result: SearchResult) => ({
 						   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
 						   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
-						   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
+						   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}${formatSearchTags(result.tags)}`,
 						   result
 					   }));
 				   } else {
 					   // Perform search with current query
 					   const results = await searchProvider.searchGists(value);
-					   
+
 					   if (results.length === 0) {
 						   quickPick.items = [{
 							   label: '$(search) No results found',
@@ -3327,7 +3406,7 @@ export function activate(context: vscode.ExtensionContext) {
 						   quickPick.items = results.map((result: SearchResult) => ({
 							   label: `$(${result.matchType === 'content' ? 'file-text' : 'gist'}) ${result.gistName}${result.fileName ? ` → ${result.fileName}` : ''}`,
 							   description: result.folderPath.length > 0 ? result.folderPath.join(' > ') : 'Root',
-							   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}`,
+							   detail: `${getMatchTypeLabel(result.matchType)}${result.lineNumber ? ` (Line ${result.lineNumber})` : ''} • ${result.isPublic ? 'Public' : 'Private'} • ${result.preview}${formatSearchTags(result.tags)}`,
 							   result
 						   }));
 					   }
@@ -3523,10 +3602,204 @@ export function activate(context: vscode.ExtensionContext) {
 				   return '📄 File Name';
 			   case 'content':
 				   return '🔍 Content';
+			   case 'tags':
+				   return '🏷️  Tags';
 			   default:
 				   return '?';
 		   }
 	   }
+
+	   // Tag management commands
+	   const addTagCommand = vscode.commands.registerCommand('gist-editor.addTag', async (gistItem: GistItem) => {
+		   if (!gistItem || !gistItem.gist) {
+			   vscode.window.showErrorMessage('Please select a gist to add a tag');
+			   return;
+		   }
+
+		   const tag = await vscode.window.showInputBox({
+			   prompt: 'Enter a tag (e.g., react, python, utility)',
+			   placeHolder: 'tag-name',
+			   validateInput: (input: string) => {
+				   if (!tagsManager.isValidTag(input)) {
+					   return 'Tag must contain only alphanumeric characters, hyphens, and underscores';
+				   }
+				   return null;
+			   }
+		   });
+
+		   if (!tag) {
+			   return;
+		   }
+
+		   try {
+			   await vscode.window.withProgress({
+				   location: vscode.ProgressLocation.Notification,
+				   title: `Adding tag "${tag}"...`
+			   }, async () => {
+				   await tagsManager.addTag(gistItem.gist!, tag);
+			   });
+			   vscode.window.showInformationMessage(`Tag "${tag}" added to gist. Format: [tag:${tag.toLowerCase()}]`);
+			   myGistsProvider.refresh();
+			   starredGistsProvider.refresh();
+		   } catch (error: any) {
+			   vscode.window.showErrorMessage(`Error adding tag: ${error.message}`);
+		   }
+	   });
+
+	   const removeTagCommand = vscode.commands.registerCommand('gist-editor.removeTag', async (gistItem: GistItem) => {
+		   if (!gistItem || !gistItem.gist) {
+			   vscode.window.showErrorMessage('Please select a gist');
+			   return;
+		   }
+
+		   try {
+			   const tags = await tagsManager.getTags(gistItem.gist);
+
+			   if (tags.length === 0) {
+				   vscode.window.showInformationMessage('This gist has no tags');
+				   return;
+			   }
+
+			   const selected = await vscode.window.showQuickPick(tags, {
+				   placeHolder: 'Select a tag to remove',
+				   title: 'Remove Tag'
+			   });
+
+			   if (!selected) {
+				   return;
+			   }
+
+			   await vscode.window.withProgress({
+				   location: vscode.ProgressLocation.Notification,
+				   title: `Removing tag "${selected}"...`
+			   }, async () => {
+				   await tagsManager.removeTag(gistItem.gist!, selected);
+			   });
+			   vscode.window.showInformationMessage(`Tag "${selected}" removed from gist`);
+			   myGistsProvider.refresh();
+			   starredGistsProvider.refresh();
+		   } catch (error: any) {
+			   vscode.window.showErrorMessage(`Error removing tag: ${error.message}`);
+		   }
+	   });
+
+	   const filterByTagCommand = vscode.commands.registerCommand('gist-editor.filterByTag', async () => {
+		   if (!githubService.isAuthenticated()) {
+			   try {
+				   await githubService.getOAuthToken();
+			   } catch (error) {
+				   const setup = await vscode.window.showErrorMessage(
+					   'You need to sign in with GitHub to filter by tag.',
+					   'Sign in with GitHub'
+				   );
+				   if (setup === 'Sign in with GitHub') {
+					   vscode.commands.executeCommand('gist-editor.setupToken');
+				   }
+				   return;
+			   }
+		   }
+
+		   try {
+			   // Fetch all gists
+			   const myGists = await githubService.getMyGists();
+			   const starredGists = await githubService.getStarredGists();
+			   const allGists = [...myGists, ...starredGists];
+
+			   // Get all unique tags
+			   const allTags = await tagsManager.getAllUniqueTags(allGists);
+
+			   if (allTags.length === 0) {
+				   vscode.window.showInformationMessage('No tags found. Add tags to your gists first. Format: [tag:tagname]');
+				   return;
+			   }
+
+			   const selectedTag = await vscode.window.showQuickPick(allTags, {
+				   placeHolder: 'Select a tag to filter by',
+				   title: 'Filter Gists by Tag'
+			   });
+
+			   if (!selectedTag) {
+				   return;
+			   }
+
+			   // Get gists with selected tag
+			   const taggedGists = await tagsManager.getGistsWithTag(allGists, selectedTag);
+
+			   if (taggedGists.length === 0) {
+				   vscode.window.showInformationMessage(`No gists found with tag "[tag:${selectedTag}]"`);
+				   return;
+			   }
+
+			   // Create a quick pick showing gists with this tag
+			   const quickPick = vscode.window.createQuickPick<{
+				   label: string;
+				   gist: Gist;
+			   }>();
+
+			   quickPick.title = `Gists with tag "[tag:${selectedTag}]" (${taggedGists.length})`;
+			   quickPick.canSelectMany = false;
+
+			   // Build items with formatted tags
+			   const items = await Promise.all(taggedGists.map(async (gist) => ({
+				   label: `${tagsManager.getCleanDescription(gist) || '(No description)'} ${gist.public ? '🌐' : '🔒'}`,
+				   description: await tagsManager.formatTagsForDisplay(gist),
+				   gist
+			   })));
+
+			   quickPick.items = items;
+
+			   quickPick.onDidChangeSelection(async (selection) => {
+				   if (selection.length > 0) {
+					   const item = selection[0];
+					   await vscode.commands.executeCommand('gist-editor.openGist', item.gist);
+					   quickPick.hide();
+				   }
+			   });
+
+			   quickPick.onDidHide(() => quickPick.dispose());
+			   quickPick.show();
+		   } catch (error: any) {
+			   vscode.window.showErrorMessage(`Error filtering by tag: ${error.message}`);
+		   }
+	   });
+
+	   const clearTagsCommand = vscode.commands.registerCommand('gist-editor.clearTags', async (gistItem: GistItem) => {
+		   if (!gistItem || !gistItem.gist) {
+			   vscode.window.showErrorMessage('Please select a gist');
+			   return;
+		   }
+
+		   try {
+			   const tags = await tagsManager.getTags(gistItem.gist);
+
+			   if (tags.length === 0) {
+				   vscode.window.showInformationMessage('This gist has no tags');
+				   return;
+			   }
+
+			   const confirmed = await vscode.window.showWarningMessage(
+				   `Clear ${tags.length} tag(s) from this gist?`,
+				   { modal: true },
+				   'Clear All'
+			   );
+
+			   if (confirmed !== 'Clear All') {
+				   return;
+			   }
+
+			   await vscode.window.withProgress({
+				   location: vscode.ProgressLocation.Notification,
+				   title: 'Clearing all tags...'
+			   }, async () => {
+				   await tagsManager.clearTags(gistItem.gist!);
+			   });
+			   vscode.window.showInformationMessage('All tags cleared from gist');
+			   myGistsProvider.refresh();
+			   starredGistsProvider.refresh();
+		   } catch (error: any) {
+			   vscode.window.showErrorMessage(`Error clearing tags: ${error.message}`);
+		   }
+	   });
 
 	   // Add all commands to subscriptions
 		  context.subscriptions.push(
@@ -3557,7 +3830,11 @@ export function activate(context: vscode.ExtensionContext) {
 			  deleteGistCommentCommand,
 			  viewGistCommentOnGitHubCommand,
 			  viewApiUsageCommand,
-			  searchCommand
+			  searchCommand,
+			  addTagCommand,
+			  removeTagCommand,
+			  filterByTagCommand,
+			  clearTagsCommand
 		  );
 }
 

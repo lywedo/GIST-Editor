@@ -190,6 +190,26 @@
         "command": "gist-editor.viewApiUsage",
         "title": "View API Usage Statistics",
         "icon": "$(graph)"
+      },
+      {
+        "command": "gist-editor.addTag",
+        "title": "Add Tag",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "gist-editor.removeTag",
+        "title": "Remove Tag",
+        "icon": "$(close)"
+      },
+      {
+        "command": "gist-editor.filterByTag",
+        "title": "Filter Gists by Tag",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "gist-editor.clearTags",
+        "title": "Clear All Tags",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -332,6 +352,21 @@
           "command": "gist-editor.viewGistCommentOnGitHub",
           "when": "view == gist-editor.comments && viewItem == gistComment",
           "group": "1_modification@2"
+        },
+        {
+          "command": "gist-editor.addTag",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "3_tags@1"
+        },
+        {
+          "command": "gist-editor.removeTag",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "3_tags@2"
+        },
+        {
+          "command": "gist-editor.clearTags",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "3_tags@3"
         }
       ]
     },

@@ -10,13 +10,14 @@ export interface SearchFilters {
   fileNamesOnly?: boolean;
   descriptionOnly?: boolean;
   contentOnly?: boolean;
+  tags?: string[];
 }
 
 export interface SearchResult {
   gistId: string;
   gistName: string;
   fileName?: string;
-  matchType: 'name' | 'description' | 'filename' | 'content';
+  matchType: 'name' | 'description' | 'filename' | 'content' | 'tags';
   preview: string;
   folderPath: string[];
   isPublic: boolean;
@@ -25,6 +26,7 @@ export interface SearchResult {
   score: number;
   gist: Gist;
   source?: SearchSource;
+  tags?: string[];
 }
 
 interface GistSearchData {
@@ -33,6 +35,7 @@ interface GistSearchData {
   gistName: string;
   searchText: string; // Combined searchable text
   source?: SearchSource;
+  tags?: string[]; // Gist tags
 }
 
 interface BaseResultContext {
@@ -42,18 +45,25 @@ interface BaseResultContext {
   folderPath: string[];
   isPublic: boolean;
   source?: SearchSource;
+  tags?: string[];
 }
 
 export class SearchProvider {
   private searchIndex: Map<string, GistSearchData> = new Map();
+  private tagsManager?: any; // TagsManager instance
+
+  constructor(tagsManager?: any) {
+    this.tagsManager = tagsManager;
+  }
 
   /**
-   * Build search index from gists
+   * Build search index from gists with optional tags
    */
-  buildSearchIndex(
+  async buildSearchIndex(
     gists: Gist[],
-    gistSources: Map<string, SearchSource> = new Map()
-  ): Map<string, GistSearchData> {
+    gistSources: Map<string, SearchSource> = new Map(),
+    gistTags?: Map<string, string[]>
+  ): Promise<Map<string, GistSearchData>> {
     this.searchIndex.clear();
 
     for (const gist of gists) {
@@ -62,13 +72,27 @@ export class SearchProvider {
       const folderPath = parsed.folderPath;
       const source = gistSources.get(gist.id);
 
-      // Combine all searchable text
+      // Get tags for this gist
+      let tags: string[] = [];
+      if (gistTags && gistTags.has(gist.id)) {
+        tags = gistTags.get(gist.id)!;
+      } else if (this.tagsManager) {
+        try {
+          tags = await this.tagsManager.getTags(gist);
+        } catch (error) {
+          console.error(`[SearchProvider] Error fetching tags for gist ${gist.id}:`, error);
+          tags = [];
+        }
+      }
+
+      // Combine all searchable text (including tags)
       const fileNames = Object.keys(gist.files).join(' ');
       const fileContent = Object.values(gist.files)
         .map((f: GistFile) => f.content || '')
         .join(' ');
+      const tagsText = tags.join(' ');
 
-      const searchText = `${gistName} ${gist.description} ${fileNames} ${fileContent}`.toLowerCase();
+      const searchText = `${gistName} ${gist.description} ${fileNames} ${fileContent} ${tagsText}`.toLowerCase();
 
       this.searchIndex.set(gist.id, {
         gist,
@@ -76,6 +100,7 @@ export class SearchProvider {
         gistName,
         searchText,
         source,
+        tags,
       });
     }
 
@@ -89,15 +114,31 @@ export class SearchProvider {
     query: string,
     filters: SearchFilters = {}
   ): Promise<SearchResult[]> {
-    if (!query.trim()) {
-      return [];
-    }
-
     const results: SearchResult[] = [];
     const queryLower = query.toLowerCase();
 
+    // If no query, return all gists as basic results for browsing
+    if (!queryLower.trim()) {
+      for (const [, data] of this.searchIndex) {
+        results.push({
+          gistId: data.gist.id,
+          gistName: data.gistName,
+          gist: data.gist,
+          source: data.source,
+          matchType: 'name',
+          preview: data.gistName,
+          folderPath: data.folderPath,
+          isPublic: data.gist.public,
+          matchContext: data.gistName,
+          score: 0,
+          tags: data.tags,
+        });
+      }
+      return results.slice(0, 50);
+    }
+
     for (const [, data] of this.searchIndex) {
-      const { gist, folderPath, gistName } = data;
+      const { gist, folderPath, gistName, tags } = data;
       const baseContext: BaseResultContext = {
         gist,
         gistId: gist.id,
@@ -105,6 +146,7 @@ export class SearchProvider {
         folderPath,
         isPublic: gist.public,
         source: data.source,
+        tags: tags || [],
       };
 
       // Apply visibility filter
@@ -129,6 +171,16 @@ export class SearchProvider {
           return lang.toLowerCase().includes(filters.language!.toLowerCase());
         });
         if (!hasLanguage) {
+          continue;
+        }
+      }
+
+      // Apply tags filter
+      if (filters.tags && filters.tags.length > 0) {
+        const hasAllTags = filters.tags.every((tag) =>
+          (tags || []).some((t) => t.toLowerCase() === tag.toLowerCase())
+        );
+        if (!hasAllTags) {
           continue;
         }
       }
@@ -181,6 +233,31 @@ export class SearchProvider {
             baseContext
           );
           matchResults.push(...contentMatches);
+        }
+      }
+
+      // Search in tags
+      if (tags && tags.length > 0) {
+        for (const tag of tags) {
+          const tagLower = tag.toLowerCase();
+          const fuzzyResult = this.fuzzyMatch(tagLower, queryLower);
+
+          if (fuzzyResult.matches) {
+            matchResults.push({
+              gistId: baseContext.gistId,
+              gistName: baseContext.gistName,
+              gist: baseContext.gist,
+              source: baseContext.source,
+              matchType: 'tags',
+              preview: `#${tag}`,
+              folderPath: baseContext.folderPath,
+              isPublic: baseContext.isPublic,
+              matchContext: `Tags: ${tags.map(t => `#${t}`).join(', ')}`,
+              score: this.calculateScore(tagLower, queryLower, 'tags') + fuzzyResult.score,
+              tags: baseContext.tags,
+            });
+            break; // Only add one result per gist for tags
+          }
         }
       }
 
@@ -274,7 +351,7 @@ export class SearchProvider {
     }
 
     const fuzzyResult = this.fuzzyMatch(text, query);
-    
+
     if (!fuzzyResult.matches) {
       return [];
     }
@@ -293,6 +370,7 @@ export class SearchProvider {
         matchContext: preview,
         score: this.calculateScore(text, query, matchType) + fuzzyResult.score,
         fileName,
+        tags: base.tags,
       },
     ];
   }
@@ -312,7 +390,7 @@ export class SearchProvider {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const fuzzyResult = this.fuzzyMatch(line, query);
-      
+
       if (fuzzyResult.matches) {
         results.push({
           gistId: base.gistId,
@@ -327,6 +405,7 @@ export class SearchProvider {
           lineNumber: i + 1,
           matchContext: this.getContentContext(lines, i, query),
           score: this.calculateScore(line, query, 'content') + fuzzyResult.score,
+          tags: base.tags,
         });
       }
     }
@@ -356,21 +435,22 @@ export class SearchProvider {
   private calculateScore(
     text: string,
     query: string,
-    matchType: 'name' | 'description' | 'filename' | 'content'
+    matchType: 'name' | 'description' | 'filename' | 'content' | 'tags'
   ): number {
     const textLower = text.toLowerCase();
     const exact = textLower === query ? 100 : 0;
     const startsWith = textLower.startsWith(query) ? 50 : 0;
     const contains = textLower.includes(query) ? 20 : 0;
 
-    const typeScore = {
+    const typeScore: Record<string, number> = {
       name: 30,
       description: 20,
       filename: 25,
       content: 10,
+      tags: 35, // Tags have high priority for matching
     };
 
-    return exact + startsWith + contains + typeScore[matchType];
+    return exact + startsWith + contains + (typeScore[matchType] || 0);
   }
 
   /**
@@ -395,9 +475,15 @@ export class SearchProvider {
       }
 
       // Secondary: match type priority
-      const typePriority = { name: 100, description: 80, filename: 60, content: 40 };
-      const aPriority = typePriority[a.matchType];
-      const bPriority = typePriority[b.matchType];
+      const typePriority: Record<string, number> = {
+        name: 100,
+        description: 80,
+        filename: 60,
+        tags: 90, // Tags are important for discovery
+        content: 40,
+      };
+      const aPriority = typePriority[a.matchType] || 0;
+      const bPriority = typePriority[b.matchType] || 0;
 
       if (aPriority !== bPriority) {
         return bPriority - aPriority;
