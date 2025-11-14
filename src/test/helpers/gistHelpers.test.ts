@@ -95,7 +95,7 @@ suite('Gist Helpers Test Suite', () => {
 				selection: {}
 			};
 			sandbox.stub(mockVscode.window, 'activeTextEditor').value(mockEditor);
-			sandbox.stub(mockVscode.window, 'showInputBox').resolves('snippet.js');
+			(sandbox.stub(mockVscode.window, 'showInputBox') as any).resolves('snippet.js');
 
 			const result = await createFromSelection();
 
@@ -131,9 +131,9 @@ suite('Gist Helpers Test Suite', () => {
 		});
 
 		test('should create JavaScript file with default content', async () => {
-			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox');
-			showInputBoxStub.onFirstCall().resolves('test.js');
-			showInputBoxStub.onSecondCall().resolves('console.log("Hello, World!");');
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
+			showInputBoxStub.onCall(0).resolves('test.js');
+			showInputBoxStub.onCall(1).resolves('console.log("Hello, World!");');
 
 			const result = await createEmptyGist();
 
@@ -143,9 +143,9 @@ suite('Gist Helpers Test Suite', () => {
 		});
 
 		test('should create Python file with default content', async () => {
-			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox');
-			showInputBoxStub.onFirstCall().resolves('test.py');
-			showInputBoxStub.onSecondCall().resolves('print("Hello, World!")');
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
+			showInputBoxStub.onCall(0).resolves('test.py');
+			showInputBoxStub.onCall(1).resolves('print("Hello, World!")');
 
 			const result = await createEmptyGist();
 
@@ -154,9 +154,9 @@ suite('Gist Helpers Test Suite', () => {
 		});
 
 		test('should use "Hello World" when user submits empty content', async () => {
-			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox');
-			showInputBoxStub.onFirstCall().resolves('test.txt');
-			showInputBoxStub.onSecondCall().resolves('');
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
+			showInputBoxStub.onCall(0).resolves('test.txt');
+			showInputBoxStub.onCall(1).resolves('');
 
 			const result = await createEmptyGist();
 
@@ -174,8 +174,8 @@ suite('Gist Helpers Test Suite', () => {
 		});
 
 		test('should create multiple files', async () => {
-			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox');
-			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick');
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
+			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick') as any;
 
 			// First file
 			showInputBoxStub.onCall(0).resolves('file1.js');
@@ -207,8 +207,8 @@ suite('Gist Helpers Test Suite', () => {
 		});
 
 		test('should return display name only when no folder selected', async () => {
-			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick');
-			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox');
+			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick') as any;
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
 
 			showQuickPickStub.resolves({ label: '📄 No folder (flat)', detail: 'no-folder' });
 			showInputBoxStub.resolves('My Gist');
@@ -221,12 +221,12 @@ suite('Gist Helpers Test Suite', () => {
 		});
 
 		test('should return folder path and display name when folder selected', async () => {
-			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick');
-			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox');
+			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick') as any;
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
 
 			showQuickPickStub.resolves({ label: '📁 Organize in a folder', detail: 'with-folder' });
-			showInputBoxStub.onFirstCall().resolves('React/Components');
-			showInputBoxStub.onSecondCall().resolves('MyComponent');
+			showInputBoxStub.onCall(0).resolves('React/Components');
+			showInputBoxStub.onCall(1).resolves('MyComponent');
 
 			const result = await getFolderPathAndName('Test Gist');
 
@@ -236,8 +236,8 @@ suite('Gist Helpers Test Suite', () => {
 		});
 
 		test('should reject folder path with double dashes', async () => {
-			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick');
-			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox');
+			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick') as any;
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
 
 			showQuickPickStub.resolves({ label: '📁 Organize in a folder', detail: 'with-folder' });
 
