@@ -334,24 +334,21 @@ export async function createMultiFileGist(): Promise<{ [filename: string]: { con
 		}
 
 		const content = await vscode.window.showInputBox({
-			prompt: `Enter content for ${fileName} (required)`,
+			prompt: `Enter content for ${fileName} (optional - press Enter to use default)`,
 			value: defaultContent,
-			placeHolder: 'File content is required...',
-			ignoreFocusOut: true,
-			validateInput: (value) => {
-				if (!value.trim()) {
-					return 'Content cannot be empty - GitHub requires file content';
-				}
-				return null;
-			}
+			placeHolder: 'Press Enter to skip and use "Hello World" as default content',
+			ignoreFocusOut: true
 		});
 
-		if (!content) {
-			// User cancelled, remove this iteration
+		// If user cancelled, skip this file
+		if (content === undefined) {
 			continue;
 		}
 
-		files[fileName] = { content };
+		// If user skipped (empty string), use "Hello World" as default
+		const finalContent = content.trim() === '' ? 'Hello World' : content;
+
+		files[fileName] = { content: finalContent };
 
 		// Ask if user wants to add more files
 		const addMore = await vscode.window.showQuickPick([

@@ -195,6 +195,22 @@ suite('Gist Helpers Test Suite', () => {
 			assert.strictEqual(result['file1.js'].content, 'console.log("file1");');
 			assert.strictEqual(result['file2.js'].content, 'console.log("file2");');
 		});
+
+		test('should use "Hello World" when user submits empty content for a file', async () => {
+			const showInputBoxStub = sandbox.stub(mockVscode.window, 'showInputBox') as any;
+			const showQuickPickStub = sandbox.stub(mockVscode.window, 'showQuickPick') as any;
+
+			// File with empty content
+			showInputBoxStub.onCall(0).resolves('test.txt');
+			showInputBoxStub.onCall(1).resolves('');
+			showQuickPickStub.onCall(0).resolves({ label: 'No, create gist now', detail: 'finish' });
+
+			const result = await createMultiFileGist();
+
+			assert.strictEqual(Object.keys(result).length, 1);
+			assert.ok('test.txt' in result);
+			assert.strictEqual(result['test.txt'].content, 'Hello World');
+		});
 	});
 
 	suite('getFolderPathAndName', () => {
