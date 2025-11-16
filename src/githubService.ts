@@ -201,6 +201,14 @@ export class GitHubService {
         }
     }
 
+    /**
+     * Public method to restore OAuth session during extension activation.
+     * This ensures all VS Code instances share the same authentication.
+     */
+    public async restoreSession(): Promise<void> {
+        return this.ensureTokenLoaded();
+    }
+
     public async getOAuthToken(): Promise<string> {
         try {
             // Request gist scope for full access to private and public gists

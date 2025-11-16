@@ -30,6 +30,12 @@ export function activate(context: vscode.ExtensionContext) {
 	// Create GitHub service
 	const githubService = new GitHubService();
 
+	// Proactively restore OAuth session if available (shared across all VS Code instances)
+	// This prevents each instance from prompting for authentication independently
+	githubService.restoreSession().catch(err => {
+		console.log('No existing OAuth session to restore:', err);
+	});
+
 	// Create tags manager (uses protocol embedded in gist descriptions)
 	const tagsManager = new TagsManager(githubService);
 

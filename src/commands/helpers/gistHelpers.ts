@@ -20,7 +20,7 @@ export async function openGistFile(gist: Gist, file: any) {
 		console.log(`Opening URI: ${uri.toString()}`);
 
 		const document = await vscode.workspace.openTextDocument(uri);
-		const editor = await vscode.window.showTextDocument(document);
+		await vscode.window.showTextDocument(document);
 		console.log(`Successfully opened document for ${file.filename}`);
 
 		// Set the language mode - try multiple approaches

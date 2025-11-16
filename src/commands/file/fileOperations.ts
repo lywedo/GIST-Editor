@@ -39,8 +39,8 @@ export function registerFileCommands(
 		}
 
 		const content = await vscode.window.showInputBox({
-			prompt: 'Enter initial content for the file (optional)',
-			placeHolder: 'File content',
+			prompt: 'Enter initial content for the file (optional - press Enter to use default)',
+			placeHolder: 'Press Enter to skip and use "Hello World" as default content',
 			value: ''
 		});
 
@@ -48,9 +48,12 @@ export function registerFileCommands(
 			return; // User cancelled
 		}
 
+		// If user skipped (empty string), use "Hello World" as default
+		const finalContent = content.trim() === '' ? 'Hello World' : content;
+
 		try {
 			await githubService.updateGist(gist.id, undefined, {
-				[filename]: { content: content || ' ' } // GitHub requires non-empty content
+				[filename]: { content: finalContent }
 			});
 
 			gistFileSystemProvider.invalidateCache(gist.id);

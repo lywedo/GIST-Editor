@@ -188,7 +188,7 @@ suite('File Operations Test Suite', () => {
 			assert.ok(showTextDocumentStub.called);
 		});
 
-		test('should successfully add file with empty content (space)', async () => {
+		test('should successfully add file with empty content (Hello World)', async () => {
 			const mockGist = createMockGist();
 			const gistItem = new GistItem(mockGist);
 
@@ -208,10 +208,10 @@ suite('File Operations Test Suite', () => {
 
 			await handler(gistItem);
 
-			// Verify that empty content is converted to a space for GitHub
+			// Verify that empty content is converted to "Hello World" for GitHub
 			const updateCall = updateGistStub.getCall(0);
 			assert.ok(updateCall);
-			assert.deepStrictEqual(updateCall.args[2], { 'newfile.txt': { content: ' ' } });
+			assert.deepStrictEqual(updateCall.args[2], { 'newfile.txt': { content: 'Hello World' } });
 		});
 
 		test('should handle errors during file addition', async () => {
