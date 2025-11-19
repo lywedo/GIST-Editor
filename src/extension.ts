@@ -32,7 +32,16 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Proactively restore OAuth session if available (shared across all VS Code instances)
 	// This prevents each instance from prompting for authentication independently
-	githubService.restoreSession().catch(err => {
+	// We await this to ensure the session is properly loaded before the extension is fully active
+	githubService.restoreSession().then(() => {
+		console.log('OAuth session restoration completed');
+		// Refresh providers if we have authentication
+		if (githubService.isAuthenticated()) {
+			console.log('Authentication detected, refreshing gist providers');
+			myGistsProvider.refresh();
+			starredGistsProvider.refresh();
+		}
+	}).catch(err => {
 		console.log('No existing OAuth session to restore:', err);
 	});
 

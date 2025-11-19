@@ -74,6 +74,8 @@ export class GitHubService {
         reset: 0
     };
     private sessionStartTime = Date.now();
+    private sessionInitialized = false;
+    private sessionInitPromise: Promise<void> | null = null;
 
     constructor() {
         this.api = axios.create({
@@ -174,6 +176,7 @@ export class GitHubService {
 
         if (this.token) {
             this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+            this.sessionInitialized = true;
             console.log('GitHub token loaded from legacy config');
         } else {
             console.log('No legacy token found, will restore OAuth session on demand');
@@ -181,11 +184,32 @@ export class GitHubService {
     }
 
     private async ensureTokenLoaded(): Promise<void> {
-        // If we already have a token, nothing to do
-        if (this.token) {
+        // If we already have a token and session is initialized, nothing to do
+        if (this.token && this.sessionInitialized) {
             return;
         }
 
+        // If we have a token but session not initialized, mark as initialized
+        if (this.token) {
+            this.sessionInitialized = true;
+            return;
+        }
+
+        // If initialization is already in progress, wait for it
+        if (this.sessionInitPromise) {
+            return this.sessionInitPromise;
+        }
+
+        // Start initialization
+        this.sessionInitPromise = this.initializeSession();
+        try {
+            await this.sessionInitPromise;
+        } finally {
+            this.sessionInitPromise = null;
+        }
+    }
+
+    private async initializeSession(): Promise<void> {
         // Try to restore from existing OAuth session (doesn't prompt user)
         try {
             console.log('Attempting to restore GitHub OAuth session...');
@@ -193,12 +217,16 @@ export class GitHubService {
             if (session) {
                 this.token = session.accessToken;
                 this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+                this.sessionInitialized = true;
                 console.log('Successfully restored GitHub OAuth session from VS Code');
                 return;
             }
         } catch (error) {
-            console.log('No existing GitHub OAuth session found');
+            console.log('No existing GitHub OAuth session found:', error);
         }
+        
+        // Mark as initialized even if no session found (to avoid repeated attempts)
+        this.sessionInitialized = true;
     }
 
     /**
@@ -216,6 +244,7 @@ export class GitHubService {
             if (session) {
                 this.token = session.accessToken;
                 this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+                this.sessionInitialized = true;
                 console.log('GitHub OAuth token obtained successfully');
                 console.log('Token scopes:', session.scopes);
 
@@ -239,6 +268,7 @@ export class GitHubService {
     public async setToken(token: string): Promise<void> {
         this.token = token;
         this.api.defaults.headers.common['Authorization'] = `token ${this.token}`;
+        this.sessionInitialized = true;
 
         const config = vscode.workspace.getConfiguration('gistEditor');
         await config.update('githubToken', token, vscode.ConfigurationTarget.Global);
@@ -252,6 +282,7 @@ export class GitHubService {
 
     public async removeToken(): Promise<void> {
         this.token = undefined;
+        this.sessionInitialized = false;
         delete this.api.defaults.headers.common['Authorization'];
 
         const config = vscode.workspace.getConfiguration('gistEditor');

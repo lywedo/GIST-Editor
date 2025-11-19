@@ -4,6 +4,16 @@ All notable changes to the "gist-editor" extension will be documented in this fi
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **🔐 OAuth Session Sharing**: Fixed shared session feature to properly restore GitHub authentication across all VS Code instances
+  - Session restoration now properly awaits initialization before any API calls
+  - Added session initialization tracking to prevent race conditions
+  - Idempotent session loading prevents multiple simultaneous initialization attempts
+  - Auto-refresh of gist providers when authentication is detected on startup
+
 ## [1.5.0] - 2025-11-12
 
 ### Added
