@@ -66,7 +66,7 @@ export function getFileIcon(filename: string): vscode.ThemeIcon {
 	if (ext === '.zip' || ext === '.tar' || ext === '.gz' || ext === '.rar' || ext === '.7z') {return new vscode.ThemeIcon('file-zip');}
 
 	// Images
-	if (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.gif' || ext === '.svg' || ext === '.webp' || ext === '.ico') {return new vscode.ThemeIcon('file-media');}
+	if (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.gif' || ext === '.svg' || ext === '.webp' || ext === '.ico' || ext === '.bmp' || ext === '.tiff' || ext === '.tif') {return new vscode.ThemeIcon('file-media');}
 
 	// Default file icon
 	return vscode.ThemeIcon.File;

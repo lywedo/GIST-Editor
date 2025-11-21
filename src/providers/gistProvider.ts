@@ -1,9 +1,12 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as os from 'os';
 import { GitHubService, Gist, GistComment } from '../githubService';
 import { GistFolderBuilder, GistFolder } from '../gistFolderBuilder';
 import { parseGistDescription, createGistDescription } from '../gistDescriptionParser';
 import { TagsManager } from '../tagsManager';
 import { GistItem } from './gistItem';
+import { GistGitService } from '../services/gistGitService';
 
 /**
  * Tree data provider for gists (my gists or starred gists)
@@ -20,10 +23,10 @@ export class GistProvider implements vscode.TreeDataProvider<GistItem> {
 	private gistToFolderMap: Map<string, GistFolder> = new Map();
 
 	// Drag and drop support
-	dropMimeTypes = ['application/vnd.code.tree-gistItem'];
+	dropMimeTypes = ['application/vnd.code.tree-gistItem', 'text/uri-list'];
 	dragMimeTypes = ['application/vnd.code.tree-gistItem'];
 
-	constructor(private gistType: 'my' | 'starred', private githubService: GitHubService, private tagsManager?: any) {}
+	constructor(private gistType: 'my' | 'starred', private githubService: GitHubService, private tagsManager?: any, private gistGitService?: GistGitService) {}
 
 	refresh(): void {
 		this.folderTreeCache.clear();
@@ -325,9 +328,179 @@ export class GistProvider implements vscode.TreeDataProvider<GistItem> {
 		console.log(`[Drag] Serialized drag data: ${JSON.stringify(draggedData)}`);
 	}
 
-	// Handle drop operations - move gists/files
+	/**
+	 * Convert Windows path to WSL path if running in WSL
+	 * Examples:
+	 *   c:/Users/name/file.png -> /mnt/c/Users/name/file.png
+	 *   C:\Users\name\file.png -> /mnt/c/Users/name/file.png
+	 *
+	 * On native Linux/macOS: Returns path unchanged
+	 * On Windows: Returns path unchanged
+	 * On WSL only: Converts Windows paths to /mnt/ format
+	 */
+	private convertToWSLPath(filePath: string): string {
+		// Only convert if running in WSL (not native Linux or macOS)
+		// WSL has specific environment variable or kernel name
+		const isWSL = process.platform === 'linux' && (
+			process.env.WSL_DISTRO_NAME !== undefined ||
+			process.env.WSL_INTEROP !== undefined ||
+			os.release().toLowerCase().includes('microsoft')
+		);
+
+		// If not WSL, return path as-is (works for native Linux, macOS, and Windows)
+		if (!isWSL) {
+			return filePath;
+		}
+
+		// Only convert Windows-style paths (C:/ or C:\) to WSL format (/mnt/c/)
+		const windowsPathMatch = filePath.match(/^([a-zA-Z]):[\/\\](.*)$/);
+		if (windowsPathMatch) {
+			const driveLetter = windowsPathMatch[1].toLowerCase();
+			const pathPart = windowsPathMatch[2].replace(/\\/g, '/');
+			const wslPath = `/mnt/${driveLetter}/${pathPart}`;
+			console.log(`[Drop] Converted Windows path to WSL: ${filePath} -> ${wslPath}`);
+			return wslPath;
+		}
+
+		// If already a Linux path or unknown format, return as-is
+		return filePath;
+	}
+
+	// Handle external file drops (images from file explorer)
+	private async handleExternalFileDrop(target: GistItem, uriListItem: vscode.DataTransferItem): Promise<void> {
+		// Only allow dropping on gists
+		if (!target.gist) {
+			vscode.window.showWarningMessage('You can only drop images onto gists');
+			return;
+		}
+
+		// Only 'my' gists provider can handle uploads
+		if (this.gistType !== 'my') {
+			vscode.window.showWarningMessage('You can only upload images to "My Gists"');
+			return;
+		}
+
+		// Check if GistGitService is available
+		if (!this.gistGitService) {
+			vscode.window.showErrorMessage('Image upload service not available');
+			return;
+		}
+
+		try {
+			const uriListValue = uriListItem.value;
+			console.log(`[Drop] Dropped external files: ${uriListValue}`);
+
+			// Parse URI list (can contain multiple files, separated by newlines)
+			const uris = uriListValue.split('\n').filter((uri: string) => uri.trim().length > 0);
+
+			// Get supported image formats from config
+			const config = vscode.workspace.getConfiguration('gistEditor');
+			const supportedFormats = config.get<string[]>('supportedImageFormats', [
+				'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp'
+			]);
+
+			for (const uriString of uris) {
+				// Parse and convert URI to file path
+				let uri: vscode.Uri;
+				try {
+					// Try parsing as URI first
+					uri = vscode.Uri.parse(uriString.trim());
+
+					// Handle vscode-local:// scheme - convert to file:// scheme
+					if (uri.scheme === 'vscode-local') {
+						// Extract the path and convert to file URI
+						const decodedPath = decodeURIComponent(uri.path);
+						uri = vscode.Uri.file(decodedPath);
+					}
+				} catch (error) {
+					console.error(`[Drop] Failed to parse URI: ${uriString}`, error);
+					vscode.window.showErrorMessage(`Failed to parse file path: ${uriString}`);
+					continue;
+				}
+
+				let filePath = uri.fsPath;
+				console.log(`[Drop] Initial file path: ${filePath}`);
+
+				// Convert Windows path to WSL path if needed (e.g., C:/Users/... -> /mnt/c/Users/...)
+				filePath = this.convertToWSLPath(filePath);
+				console.log(`[Drop] Converted file path: ${filePath}`);
+
+				const ext = path.extname(filePath).toLowerCase();
+
+				// Check if it's an image file
+				if (!supportedFormats.includes(ext)) {
+					vscode.window.showWarningMessage(`Skipping ${path.basename(filePath)}: Only image files can be uploaded via drag-and-drop`);
+					continue;
+				}
+
+				const filename = path.basename(filePath);
+
+				// Check for duplicate filename
+				if (target.gist.files[filename]) {
+					const result = await vscode.window.showWarningMessage(
+						`File "${filename}" already exists in this gist. Overwrite?`,
+						'Overwrite',
+						'Rename',
+						'Skip'
+					);
+
+					if (result === 'Skip') {
+						continue;
+					} else if (result === 'Rename') {
+						// Auto-rename with counter
+						const nameParts = filename.lastIndexOf('.') > 0
+							? [filename.substring(0, filename.lastIndexOf('.')), filename.substring(filename.lastIndexOf('.'))]
+							: [filename, ''];
+
+						let counter = 1;
+						let newFilename = `${nameParts[0]}_${counter}${nameParts[1]}`;
+						while (target.gist.files[newFilename]) {
+							counter++;
+							newFilename = `${nameParts[0]}_${counter}${nameParts[1]}`;
+						}
+
+						// Upload with new filename
+						await vscode.window.withProgress({
+							location: vscode.ProgressLocation.Notification,
+							title: `Uploading ${newFilename}...`,
+							cancellable: false
+						}, async () => {
+							await this.gistGitService!.addImageToGist(target.gist!.id, filePath, newFilename);
+						});
+						continue;
+					}
+				}
+
+				// Upload the image
+				await vscode.window.withProgress({
+					location: vscode.ProgressLocation.Notification,
+					title: `Uploading ${filename}...`,
+					cancellable: false
+				}, async () => {
+					await this.gistGitService!.addImageToGist(target.gist!.id, filePath, filename);
+				});
+			}
+
+			// Refresh the view after all uploads
+			this.refresh();
+			vscode.window.showInformationMessage(`✓ Images uploaded successfully`);
+
+		} catch (error: any) {
+			console.error('[Drop] Error handling external file drop:', error);
+			vscode.window.showErrorMessage(`Failed to upload image: ${error.message}`);
+		}
+	}
+
+	// Handle drop operations - move gists/files or upload images
 	async handleDrop(target: GistItem, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
 		console.log(`[Drop] Dropping on target, isFolder: ${target.isFolder}, isGist: ${!!target.gist}`);
+
+		// Check for external file drops (images from file system)
+		const uriList = dataTransfer.get('text/uri-list');
+		if (uriList) {
+			await this.handleExternalFileDrop(target, uriList);
+			return;
+		}
 
 		const draggedItems = dataTransfer.get('application/vnd.code.tree-gistItem');
 		if (!draggedItems) {

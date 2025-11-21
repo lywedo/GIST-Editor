@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { Gist, GistComment } from '../githubService';
 import { GistFolder } from '../gistFolderBuilder';
 import { parseGistDescription } from '../gistDescriptionParser';
@@ -124,7 +125,31 @@ export class GistItem extends vscode.TreeItem {
 			super(file.filename, vscode.TreeItemCollapsibleState.None);
 			const encodedFilename = encodeURIComponent(file.filename);
 			this.id = `file:${gist.id}:${encodedFilename}`;
-			this.tooltip = `${file.filename}\nLanguage: ${file.language}\nSize: ${file.size} bytes`;
+
+			// Check if this is an image file
+			const ext = path.extname(file.filename).toLowerCase();
+			const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.ico'];
+			const isImage = imageExtensions.includes(ext);
+
+			// Create tooltip with image preview for image files
+			if (isImage && file.raw_url) {
+				const markdown = new vscode.MarkdownString();
+				markdown.supportHtml = true;
+				markdown.isTrusted = true;
+
+				// Add image preview (max 300px width for better display)
+				markdown.appendMarkdown(`![${file.filename}](${file.raw_url}|width=300)\n\n`);
+				markdown.appendMarkdown(`**${file.filename}**\n\n`);
+				markdown.appendMarkdown(`Format: ${ext.toUpperCase().substring(1)}\n\n`);
+				markdown.appendMarkdown(`Size: ${this.formatFileSize(file.size)}\n\n`);
+				markdown.appendMarkdown(`[Open in Browser](${file.raw_url})`);
+
+				this.tooltip = markdown;
+			} else {
+				// Regular text tooltip for non-image files
+				this.tooltip = `${file.filename}\nLanguage: ${file.language}\nSize: ${file.size} bytes`;
+			}
+
 			this.contextValue = 'gistFile';
 			this.iconPath = getFileIcon(file.filename);
 			this.command = {
@@ -160,6 +185,19 @@ export class GistItem extends vscode.TreeItem {
 				tooltipText += `\nTags: ${tagsDisplay}`;
 			}
 			this.tooltip = tooltipText;
+		}
+	}
+
+	/**
+	 * Format file size in human-readable format
+	 */
+	private formatFileSize(bytes: number): string {
+		if (bytes < 1024) {
+			return `${bytes} bytes`;
+		} else if (bytes < 1024 * 1024) {
+			return `${(bytes / 1024).toFixed(2)} KB`;
+		} else {
+			return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 		}
 	}
 }

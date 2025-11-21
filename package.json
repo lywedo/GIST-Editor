@@ -2,7 +2,7 @@
   "name": "gist-editor",
   "displayName": "Gist Editor",
   "description": "Manage GitHub Gists directly from VS Code. Create, edit, view, and organize your gists without leaving the editor.",
-  "version": "1.5.2",
+  "version": "2.0.0",
   "publisher": "lywedo",
   "icon": "icon-marketplace.png",
   "license": "MIT",
@@ -210,6 +210,31 @@
         "command": "gist-editor.clearTags",
         "title": "Clear All Tags",
         "icon": "$(trash)"
+      },
+      {
+        "command": "gist-editor.addImageToGist",
+        "title": "Add Image to Gist",
+        "icon": "$(file-media)"
+      },
+      {
+        "command": "gist-editor.copyImageUrl",
+        "title": "Copy Image URL",
+        "icon": "$(link)"
+      },
+      {
+        "command": "gist-editor.copyMarkdownImage",
+        "title": "Copy as Markdown Image",
+        "icon": "$(markdown)"
+      },
+      {
+        "command": "gist-editor.copyHtmlImage",
+        "title": "Copy as HTML Image",
+        "icon": "$(code)"
+      },
+      {
+        "command": "gist-editor.pasteFileToGist",
+        "title": "Paste File from Clipboard",
+        "icon": "$(clippy)"
       }
     ],
     "menus": {
@@ -279,6 +304,16 @@
           "group": "1_modification@2"
         },
         {
+          "command": "gist-editor.addImageToGist",
+          "when": "view == gist-editor.gistList && viewItem == gist",
+          "group": "1_modification@2.5"
+        },
+        {
+          "command": "gist-editor.pasteFileToGist",
+          "when": "view == gist-editor.gistList && (viewItem == gist || viewItem == gistFolder)",
+          "group": "1_modification@2.6"
+        },
+        {
           "command": "gist-editor.viewGistHistory",
           "when": "view == gist-editor.gistList && viewItem == gist",
           "group": "1_modification@3"
@@ -307,6 +342,21 @@
           "command": "gist-editor.openInGitHub",
           "when": "view == gist-editor.gistList && viewItem == gistFile",
           "group": "1_modification@2"
+        },
+        {
+          "command": "gist-editor.copyImageUrl",
+          "when": "view == gist-editor.gistList && viewItem == gistFile",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "gist-editor.copyMarkdownImage",
+          "when": "view == gist-editor.gistList && viewItem == gistFile",
+          "group": "3_copy@2"
+        },
+        {
+          "command": "gist-editor.copyHtmlImage",
+          "when": "view == gist-editor.gistList && viewItem == gistFile",
+          "group": "3_copy@3"
         },
         {
           "command": "gist-editor.deleteFileFromGist",
@@ -379,6 +429,21 @@
           "default": "",
           "description": "GitHub Personal Access Token for accessing gists",
           "scope": "application"
+        },
+        "gistEditor.maxImageSizeMB": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum image file size in MB",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "gistEditor.supportedImageFormats": {
+          "type": "array",
+          "default": [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"],
+          "description": "Supported image file extensions",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -410,6 +475,12 @@
         "command": "gist-editor.search",
         "key": "ctrl+alt+f",
         "mac": "cmd+alt+f"
+      },
+      {
+        "command": "gist-editor.pasteFileToGist",
+        "key": "ctrl+v",
+        "mac": "cmd+v",
+        "when": "focusedView == gist-editor.gistList || focusedView == gist-editor.starred"
       }
     ]
   },
@@ -444,6 +515,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "axios": "^1.12.2"
+    "axios": "^1.12.2",
+    "simple-git": "^3.30.0"
   }
 }

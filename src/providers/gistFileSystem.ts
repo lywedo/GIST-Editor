@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { GitHubService, Gist } from '../githubService';
 
 /**
@@ -70,6 +71,14 @@ export class GistFileSystemProvider implements vscode.FileSystemProvider {
 		const pathParts = uri.path.substring(1).split('/');
 		const gistId = pathParts[0];
 		const filename = decodeURIComponent(pathParts.slice(1).join('/'));
+
+		// Check if this is a binary file (image)
+		if (this.isBinaryFile(filename, content)) {
+			throw vscode.FileSystemError.NoPermissions(
+				'Binary files cannot be edited directly. Please use "Add Image to Gist" command to upload images.'
+			);
+		}
+
 		const contentStr = Buffer.from(content).toString('utf8');
 
 		console.log(`FileSystem: Writing "${filename}" to gist ${gistId} (${contentStr.length} chars)`);
@@ -93,6 +102,22 @@ export class GistFileSystemProvider implements vscode.FileSystemProvider {
 			console.error('Error writing gist file:', error);
 			throw vscode.FileSystemError.Unavailable(error.message);
 		}
+	}
+
+	/**
+	 * Check if a file is a binary file (image) based on extension
+	 */
+	private isBinaryFile(filename: string, content: Uint8Array): boolean {
+		const ext = path.extname(filename).toLowerCase();
+		const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico'];
+
+		// SVG is technically text/XML but often contains binary data
+		if (ext === '.svg') {
+			// Allow SVG editing as it's text-based
+			return false;
+		}
+
+		return imageExtensions.includes(ext);
 	}
 
 	delete(uri: vscode.Uri): void {

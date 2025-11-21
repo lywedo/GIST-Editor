@@ -235,7 +235,18 @@ export function getLanguageFromExtension(filename: string): string {
 		'graphql': 'graphql',
 		'gql': 'graphql',
 		'proto': 'protobuf',
-		'thrift': 'thrift'
+		'thrift': 'thrift',
+
+		// Image formats
+		'png': 'image',
+		'jpg': 'image',
+		'jpeg': 'image',
+		'gif': 'image',
+		'webp': 'image',
+		'bmp': 'image',
+		'ico': 'image',
+		'tiff': 'image',
+		'tif': 'image'
 	};
 
 	return extensionMap[extension] || 'plaintext';

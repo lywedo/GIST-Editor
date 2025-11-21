@@ -7,11 +7,15 @@ import { GistProvider } from './providers/gistProvider';
 import { GistItem } from './providers/gistItem';
 import { GistFileSystemProvider } from './providers/gistFileSystem';
 import { CommentProvider } from './providers/commentProvider';
+import { GistGitService } from './services/gistGitService';
 import {
 	registerBasicCommands,
 	registerAuthCommands,
 	registerGistCommands,
 	registerFileCommands,
+	registerImageCommands,
+	registerCopyImageCommands,
+	registerPasteFileCommand,
 	registerFolderCommands,
 	registerCommentCommands,
 	registerTagCommands,
@@ -48,6 +52,9 @@ export function activate(context: vscode.ExtensionContext) {
 	// Create tags manager (uses protocol embedded in gist descriptions)
 	const tagsManager = new TagsManager(githubService);
 
+	// Create Git service for image uploads
+	const gistGitService = new GistGitService(githubService);
+
 	// Search cache
 	let searchCache: SearchCache | null = null;
 
@@ -70,8 +77,8 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	// Create tree data providers
-	const myGistsProvider = new GistProvider('my', githubService, tagsManager);
-	const starredGistsProvider = new GistProvider('starred', githubService, tagsManager);
+	const myGistsProvider = new GistProvider('my', githubService, tagsManager, gistGitService);
+	const starredGistsProvider = new GistProvider('starred', githubService, tagsManager, gistGitService);
 	const commentProvider = new CommentProvider(githubService);
 
 	// Register tree data providers
@@ -127,11 +134,29 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// Track selected gist for paste command
+	let selectedGistItem: GistItem | undefined;
+
+	gistSelectionTracker.onDidChangeSelection((e) => {
+		if (e.selection.length > 0 && e.selection[0] instanceof GistItem) {
+			selectedGistItem = e.selection[0];
+		}
+	});
+
+	starredSelectionTracker.onDidChangeSelection((e) => {
+		if (e.selection.length > 0 && e.selection[0] instanceof GistItem) {
+			selectedGistItem = e.selection[0];
+		}
+	});
+
 	// Register all commands
 	registerBasicCommands(context, myGistsProvider, starredGistsProvider, clearSearchCache);
 	registerAuthCommands(context, githubService, myGistsProvider, starredGistsProvider, commentProvider, apiUsageOutputChannel);
 	registerGistCommands(context, githubService, myGistsProvider, starredGistsProvider);
 	registerFileCommands(context, githubService, myGistsProvider, starredGistsProvider, gistFileSystemProvider);
+	registerImageCommands(context, gistGitService, myGistsProvider, starredGistsProvider, gistFileSystemProvider);
+	registerCopyImageCommands(context);
+	registerPasteFileCommand(context, githubService, gistGitService, myGistsProvider, starredGistsProvider, gistFileSystemProvider, () => selectedGistItem);
 	registerFolderCommands(context, githubService, myGistsProvider, starredGistsProvider);
 	registerCommentCommands(context, githubService, commentProvider, myGistsProvider, starredGistsProvider);
 	registerTagCommands(context, tagsManager, githubService, myGistsProvider, starredGistsProvider);

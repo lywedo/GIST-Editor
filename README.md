@@ -263,6 +263,7 @@ Organize gists with powerful tagging system synced to GitHub:
 
 **Right-click any gist for powerful actions:**
 - ➕ **Add File** - Expand gists with multiple files
+- 🖼️ **Add Image** - Upload images directly to your gists (PNG, JPG, GIF, SVG, WebP, BMP)
 - ✏️ **Rename** - Update descriptions and filenames
 - 🌐 **Open in GitHub** - Jump to web interface
 - 📜 **View History** - See all revisions
@@ -274,9 +275,97 @@ Organize gists with powerful tagging system synced to GitHub:
 - ✏️ **Rename Folder** - Reorganize your folder structure
 - 🗑️ **Delete Folder** - Remove the entire folder hierarchy
 
+### 🖼️ **Image Upload Support**
+
+Upload images directly to your gists using Git operations:
+
+**Supported Formats**:
+- PNG, JPEG, GIF, WebP, BMP, SVG, ICO
+- Configurable max file size (default: 10MB)
+- GitHub limit: 100MB per file
+
+**Two Ways to Upload**:
+
+**Method 1: Drag & Drop** ⭐ *Recommended*
+1. Drag an image file from your file explorer
+2. Drop it onto **a gist in the sidebar** (not the editor!)
+   - Look for the Gist Editor icon in the Activity Bar (left sidebar)
+   - Drag and drop onto a gist item in the "My Gists" tree view
+3. Image is automatically uploaded
+4. Handles filename conflicts with auto-rename options
+
+**Important**: Drop the image onto a **gist in the sidebar**, not into the editor window. Dropping in the editor will just open the image for viewing.
+
+**Method 2: Right-Click Menu**
+1. Right-click on any gist → "Add Image to Gist"
+2. Select an image from your file system
+3. Customize filename (optional)
+4. Image is automatically uploaded via Git
+
+**Features**:
+- 📎 **Multi-file upload**: Drop multiple images at once
+- 🔄 **Duplicate handling**: Auto-rename or overwrite existing files
+- 📊 **Progress feedback**: Real-time upload notifications
+- ⚡ **Fast & secure**: Uses Git operations for reliable uploads
+- 🖼️ **Image preview**: Hover over image files to see thumbnail previews in tooltips
+- 📋 **Easy referencing**: Copy image URLs, Markdown, or HTML tags with one click
+
+**Why Git-Based?**:
+- GitHub's REST API doesn't support binary files
+- Uses secure Git clone/commit/push workflow
+- Supports all image formats without size restrictions (up to 100MB)
+- Images become part of gist history
+
+**Copying Image References** 📋:
+
+Need to reference an image in a markdown file or HTML document? Right-click any image file and choose:
+
+1. **Copy Image URL** - Raw GitHub URL
+   ```
+   https://gist.githubusercontent.com/username/gist-id/raw/hash/image.png
+   ```
+
+2. **Copy as Markdown Image** - Perfect for README.md files
+   ```markdown
+   ![Description](https://gist.githubusercontent.com/.../image.png)
+   ```
+   - Prompts for alt text (image description)
+   - Generates proper markdown syntax
+   - Ready to paste into any markdown file
+
+3. **Copy as HTML Image** - For web pages and HTML docs
+   ```html
+   <img src="https://gist.githubusercontent.com/.../image.png" alt="Description" width="300" />
+   ```
+   - Prompts for alt text and optional width
+   - Generates semantic HTML
+   - Supports pixel (300) or percentage (50%) widths
+
+**Example Workflow**:
+```
+1. Upload screenshot.png to a gist
+2. Right-click → "Copy as Markdown Image"
+3. Enter alt text: "App dashboard screenshot"
+4. Paste into README.md: ![App dashboard screenshot](https://...)
+```
+
+**Configuration**:
+```json
+{
+  "gistEditor.maxImageSizeMB": 10,
+  "gistEditor.supportedImageFormats": [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"]
+}
+```
+
 ### 🎯 **Drag & Drop Organization**
 
 Effortlessly reorganize your gists with intuitive drag-and-drop:
+
+**Upload Images from File Explorer** ⭐ *New*:
+- Drag image files from your file explorer
+- Drop them onto any gist in the tree view
+- Multiple images can be dropped at once
+- Automatic duplicate detection with rename options
 
 **Move Gists Between Folders**:
 - Drag a gist and drop it on any folder to move it
@@ -289,8 +378,17 @@ Effortlessly reorganize your gists with intuitive drag-and-drop:
 - Source file is removed after successful transfer
 - Preserves file content and language detection
 
-**Example Workflow**:
+**Example Workflows**:
 ```
+Image Upload (via Drag & Drop):
+1. Open file explorer → Find an image (e.g., screenshot.png)
+2. Drag the image file from explorer
+3. Drop it onto a gist in the SIDEBAR tree view (not the editor!)
+   └─ Look for "My Gists" panel on the left
+4. Image uploads automatically via Git
+5. Image appears in the gist files list
+
+File Organization:
 1. Expand "React/Hooks" gist → See its files
 2. Drag "useAuth.js" file
 3. Drop on "React/Utilities" gist
@@ -299,7 +397,7 @@ Effortlessly reorganize your gists with intuitive drag-and-drop:
 
 ---
 
-## 🎨 Language Support
+## 🎨 Language & File Type Support
 
 **100+ Languages with Automatic Detection**:
 
@@ -332,6 +430,15 @@ Effortlessly reorganize your gists with intuitive drag-and-drop:
 - Markdown/LaTeX
 
 </td>
+<td>
+
+**Binary Files**
+- PNG/JPEG/GIF
+- WebP/BMP/SVG
+- ICO/TIFF
+- *Image support via Git*
+
+</td>
 </tr>
 </table>
 
@@ -348,8 +455,16 @@ Effortlessly reorganize your gists with intuitive drag-and-drop:
 }
 ```
 
+**Image Upload Configuration**:
+```json
+{
+  "gistEditor.maxImageSizeMB": 10,
+  "gistEditor.supportedImageFormats": [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"]
+}
+```
+
 **Token Scopes Required**:
-- ✅ `gist` - Full gist access
+- ✅ `gist` - Full gist access (includes image upload via Git)
 
 ---
 
@@ -371,6 +486,9 @@ Effortlessly reorganize your gists with intuitive drag-and-drop:
 - **VS Code**: Version 1.104.0 or higher
 - **GitHub Account**: Free account works perfectly
 - **Internet**: Required for syncing with GitHub
+- **WSL Support**: ✅ Fully compatible with WSL (Windows Subsystem for Linux)
+  - Automatically converts Windows paths to WSL paths for drag-and-drop
+  - Drag images from Windows Explorer when running VS Code in WSL
 
 ---
 
